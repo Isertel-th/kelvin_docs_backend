@@ -24,7 +24,7 @@ cloudinary.config({
     api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-// --- 3. CONFIGURACIÓN DE STORAGE (FORZANDO PDF) ---
+// --- 3. CONFIGURACIÓN DE STORAGE ---
 const storage = new CloudinaryStorage({
     cloudinary: cloudinary,
     params: async (req, file) => {
@@ -33,13 +33,12 @@ const storage = new CloudinaryStorage({
         
         return {
             folder: 'sistema_vehicular',
-            format: 'pdf', // Siempre guardar como PDF en Cloudinary
+            format: 'pdf',
             public_id: `${cleanName}_${timestamp}`
         };
     }
 });
 
-// FILTRO DE SEGURIDAD EN EL SERVIDOR
 const upload = multer({ 
     storage: storage,
     fileFilter: (req, file, cb) => {
@@ -64,7 +63,7 @@ const verificarToken = (req, res, next) => {
     }
 };
 
-// --- 5. RUTAS EXISTENTES (LOGIN Y SUBIDA USUARIO) ---
+// --- 5. RUTAS DE USUARIO ---
 app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
     try {
@@ -87,7 +86,7 @@ app.post('/api/subir', verificarToken, upload.single('archivo'), async (req, res
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- 6. RUTAS DE ADMIN ---
+// --- 6. RUTAS DE ADMIN (MODIFICADAS) ---
 app.get('/api/admin/empleados', verificarToken, async (req, res) => {
     if (req.user.rol !== 'admin') return res.status(403).json({ error: 'No autorizado' });
     const result = await pool.query("SELECT id, nombre_completo FROM usuarios WHERE rol = 'user'");
@@ -100,24 +99,38 @@ app.get('/api/admin/documentos/:id', verificarToken, async (req, res) => {
     res.json(result.rows);
 });
 
-// --- 7. RUTA EMPRESA (CORREGIDA) ---
-app.post('/api/subir-empresa', verificarToken, upload.single('archivo'), async (req, res) => {
+// NUEVA RUTA: Eliminar documento
+// En server.js (Sección 6)
+app.delete('/api/admin/documentos/:id', verificarToken, async (req, res) => {
     if (req.user.rol !== 'admin') return res.status(403).json({ error: 'No autorizado' });
-    const { tipo_documento } = req.body;
-
+    
+    const { id } = req.params; // Este es el ID de la tabla 'documentos'
+    
     try {
-        await pool.query('INSERT INTO documentos_empresa (tipo_documento, url_cloudinary) VALUES ($1, $2)', [tipo_documento, req.file.path]);
-        res.json({ message: 'Documento institucional guardado' });
-    } catch (err) {
-        res.status(500).json({ error: "Error en base de datos: " + err.message });
+        const result = await pool.query('DELETE FROM documentos WHERE id = $1', [id]);
+        
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: 'Documento no encontrado' });
+        }
+        
+        res.json({ message: 'Registro eliminado de la base de datos correctamente' });
+    } catch (err) { 
+        console.error(err);
+        res.status(500).json({ error: 'Error al eliminar el registro' }); 
     }
 });
 
-// MANEJO DE ERRORES DE MULTER (Si no es PDF)
+app.post('/api/subir-empresa', verificarToken, upload.single('archivo'), async (req, res) => {
+    if (req.user.rol !== 'admin') return res.status(403).json({ error: 'No autorizado' });
+    const { tipo_documento } = req.body;
+    try {
+        await pool.query('INSERT INTO documentos_empresa (tipo_documento, url_cloudinary) VALUES ($1, $2)', [tipo_documento, req.file.path]);
+        res.json({ message: 'Documento institucional guardado' });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.use((err, req, res, next) => {
-    if (err.message === 'SOLO_PDF_PERMITIDO') {
-        return res.status(400).json({ error: 'El archivo debe ser un PDF' });
-    }
+    if (err.message === 'SOLO_PDF_PERMITIDO') return res.status(400).json({ error: 'El archivo debe ser un PDF' });
     res.status(500).json({ error: err.message });
 });
 
