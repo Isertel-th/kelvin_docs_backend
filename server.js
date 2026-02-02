@@ -78,12 +78,21 @@ app.post('/api/login', async (req, res) => {
 });
 
 app.post('/api/subir', verificarToken, upload.single('archivo'), async (req, res) => {
-    const { tipo_documento } = req.body;
+    // 1. Recibimos 'nombre_user' desde el body del frontend
+    const { tipo_documento, nombre_user } = req.body; 
     const usuario_id = req.user.id;
+
     try {
-        await pool.query('INSERT INTO documentos (usuario_id, tipo_documento, url_cloudinary) VALUES ($1, $2, $3)', [usuario_id, tipo_documento, req.file.path]);
+        // 2. Insertamos en la nueva columna 'nombre_user'
+        await pool.query(
+            'INSERT INTO documentos (usuario_id, tipo_documento, url_cloudinary, nombre_user) VALUES ($1, $2, $3, $4)', 
+            [usuario_id, tipo_documento, req.file.path, nombre_user]
+        );
         res.json({ message: 'Éxito', url: req.file.path });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { 
+        console.error(err);
+        res.status(500).json({ error: err.message }); 
+    }
 });
 
 // --- 6. RUTAS DE ADMIN (MODIFICADAS) ---
