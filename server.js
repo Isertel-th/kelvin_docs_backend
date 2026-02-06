@@ -24,27 +24,14 @@ cloudinary.config({
 
 const storage = new CloudinaryStorage({
     cloudinary: cloudinary,
-    params: async (req, file) => {
-        const timestamp = Date.now();
-        const cleanName = file.originalname.split('.')[0].replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '').toLowerCase();
-        return {
-            folder: 'sistema_vehicular',
-            format: 'pdf',
-            public_id: `${cleanName}_${timestamp}`
-        };
-    }
+    params: async (req, file) => ({
+        folder: 'sistema_vehicular',
+        format: 'pdf',
+        public_id: `${Date.now()}_${file.originalname.split('.')[0]}`
+    })
 });
 
-const upload = multer({ 
-    storage: storage,
-    fileFilter: (req, file, cb) => {
-        if (file.mimetype === "application/pdf") {
-            cb(null, true);
-        } else {
-            cb(new Error("SOLO_PDF_PERMITIDO"), false);
-        }
-    }
-});
+const upload = multer({ storage });
 
 const verificarToken = (req, res, next) => {
     const token = req.header('Authorization');
@@ -53,12 +40,10 @@ const verificarToken = (req, res, next) => {
         const verificado = jwt.verify(token.replace('Bearer ', ''), process.env.JWT_SECRET);
         req.user = verificado;
         next();
-    } catch (err) {
-        res.status(400).json({ error: 'Token no válido' });
-    }
+    } catch (err) { res.status(400).json({ error: 'Token no válido' }); }
 };
 
-// --- RUTAS DE ACCESO ---
+// --- LOGIN ---
 app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
     try {
@@ -72,80 +57,65 @@ app.post('/api/login', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- RUTAS ADMINISTRATIVAS DE USUARIOS ---
+// --- RUTA CRÍTICA: CREAR USUARIO CON LOGS ---
 app.post('/api/admin/crear-usuario', verificarToken, async (req, res) => {
-    if (req.user.rol !== 'admin') return res.status(403).json({ error: 'No autorizado' });
-    const { username, password, nombre_completo } = req.body;
+    console.log("--- INICIO DE CREACIÓN DE USUARIO ---");
+    console.log("Datos recibidos:", req.body);
+    
+    if (req.user.rol !== 'admin') {
+        console.log("FALLO: El usuario no es admin");
+        return res.status(403).json({ error: 'No autorizado' });
+    }
+
+    const { username, password_hash, nombre_completo } = req.body;
+
     try {
-        await pool.query(
-            'INSERT INTO usuarios (username, password_hash, nombre_completo, rol) VALUES ($1, $2, $3, $4)',
-            [username, password, nombre_completo, 'user']
-        );
-        res.json({ message: 'Usuario creado con éxito' });
-    } catch (err) { res.status(500).json({ error: 'El usuario ya existe o error en DB' }); }
+        console.log("Ejecutando Query en DB...");
+        const query = 'INSERT INTO usuarios (username, password_hash, nombre_completo, rol) VALUES ($1, $2, $3, $4) RETURNING id';
+        const values = [username, password_hash, nombre_completo, 'user'];
+        
+        const result = await pool.query(query, values);
+        console.log("USUARIO CREADO EXITOSAMENTE. ID:", result.rows[0].id);
+        
+        res.json({ message: 'Usuario creado', id: result.rows[0].id });
+    } catch (err) {
+        console.error("!!! ERROR EN DB !!!");
+        console.error("Mensaje de error:", err.message);
+        console.error("Código de error:", err.code); // Ayuda a saber si es duplicado o falta columna
+        res.status(500).json({ 
+            error: 'Error interno de DB', 
+            detalle: err.message,
+            codigo: err.code 
+        });
+    }
 });
 
+// --- LISTA DE EMPLEADOS ---
 app.get('/api/admin/empleados', verificarToken, async (req, res) => {
-    if (req.user.rol !== 'admin') return res.status(403).json({ error: 'No autorizado' });
     const result = await pool.query("SELECT id, nombre_completo FROM usuarios WHERE rol = 'user' ORDER BY nombre_completo ASC");
     res.json(result.rows);
 });
 
-// --- GESTIÓN DE DOCUMENTOS POR USUARIO (ADMIN) ---
-app.get('/api/admin/documentos/:id', verificarToken, async (req, res) => {
-    if (req.user.rol !== 'admin') return res.status(403).json({ error: 'No autorizado' });
-    const result = await pool.query('SELECT * FROM documentos WHERE usuario_id = $1', [req.params.id]);
-    res.json(result.rows);
-});
-
+// --- SUBIDA DE DOCUMENTOS (ADMIN) ---
 app.post('/api/admin/subir-a-usuario', verificarToken, upload.single('archivo'), async (req, res) => {
-    if (req.user.rol !== 'admin') return res.status(403).json({ error: 'No autorizado' });
     const { tipo_documento, usuario_id, nombre_user } = req.body;
     try {
         await pool.query(
             'INSERT INTO documentos (usuario_id, tipo_documento, url_cloudinary, nombre_user) VALUES ($1, $2, $3, $4)', 
             [usuario_id, tipo_documento, req.file.path, nombre_user]
         );
-        res.json({ message: 'Documento cargado correctamente' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+        res.json({ message: 'Documento cargado' });
+    } catch (err) { 
+        console.error("Error al subir:", err.message);
+        res.status(500).json({ error: err.message }); 
+    }
 });
 
-app.delete('/api/admin/documentos/:id', verificarToken, async (req, res) => {
-    if (req.user.rol !== 'admin') return res.status(403).json({ error: 'No autorizado' });
-    try {
-        await pool.query('DELETE FROM documentos WHERE id = $1', [req.params.id]);
-        res.json({ message: 'Eliminado' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// --- DOCUMENTOS EMPRESA ---
-app.get('/api/admin/documentos-empresa', verificarToken, async (req, res) => {
-    if (req.user.rol !== 'admin') return res.status(403).json({ error: 'No autorizado' });
-    const result = await pool.query('SELECT * FROM documentos_empresa ORDER BY id DESC');
+// --- DOCUMENTOS POR USUARIO ---
+app.get('/api/admin/documentos/:id', verificarToken, async (req, res) => {
+    const result = await pool.query('SELECT * FROM documentos WHERE usuario_id = $1', [req.params.id]);
     res.json(result.rows);
 });
 
-app.post('/api/subir-empresa', verificarToken, upload.single('archivo'), async (req, res) => {
-    if (req.user.rol !== 'admin') return res.status(403).json({ error: 'No autorizado' });
-    const { tipo_documento } = req.body;
-    try {
-        await pool.query('INSERT INTO documentos_empresa (tipo_documento, url_cloudinary) VALUES ($1, $2)', [tipo_documento, req.file.path]);
-        res.json({ message: 'Ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.delete('/api/admin/documentos-empresa/:id', verificarToken, async (req, res) => {
-    if (req.user.rol !== 'admin') return res.status(403).json({ error: 'No autorizado' });
-    try {
-        await pool.query('DELETE FROM documentos_empresa WHERE id = $1', [req.params.id]);
-        res.json({ message: 'Eliminado' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.use((err, req, res, next) => {
-    if (err.message === 'SOLO_PDF_PERMITIDO') return res.status(400).json({ error: 'Solo PDFs' });
-    res.status(500).json({ error: err.message });
-});
-
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Servidor en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Servidor listo en puerto ${PORT}`));
