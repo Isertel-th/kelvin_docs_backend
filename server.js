@@ -57,7 +57,23 @@ app.post('/api/login', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// CREAR USUARIO (Corregido a Nombre Completo)
+// INDICADORES (NUEVO)
+app.get('/api/admin/estadisticas', verificarToken, async (req, res) => {
+    try {
+        const totalTrabajadores = await pool.query("SELECT COUNT(*) FROM usuarios WHERE rol = 'user'");
+        const conteoDocs = await pool.query(`
+            SELECT tipo_documento, COUNT(*) as cantidad 
+            FROM documentos 
+            GROUP BY tipo_documento
+        `);
+        res.json({
+            totalTrabajadores: parseInt(totalTrabajadores.rows[0].count),
+            detalles: conteoDocs.rows
+        });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// CREAR USUARIO
 app.post('/api/admin/crear-usuario', verificarToken, async (req, res) => {
     if (req.user.rol !== 'admin') return res.status(403).json({ error: 'No autorizado' });
     const { cedula, nombre_completo } = req.body;
