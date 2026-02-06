@@ -11,20 +11,17 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// --- 1. CONEXIÓN A BASE DE DATOS ---
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false }
 });
 
-// --- 2. CONFIGURACIÓN DE CLOUDINARY ---
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
     api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-// --- 3. CONFIGURACIÓN DE STORAGE ---
 const storage = new CloudinaryStorage({
     cloudinary: cloudinary,
     params: async (req, file) => {
@@ -49,7 +46,6 @@ const upload = multer({
     }
 });
 
-// --- 4. MIDDLEWARE DE SEGURIDAD ---
 const verificarToken = (req, res, next) => {
     const token = req.header('Authorization');
     if (!token) return res.status(401).json({ error: 'Acceso denegado' });
@@ -62,7 +58,7 @@ const verificarToken = (req, res, next) => {
     }
 };
 
-// --- 5. RUTAS DE USUARIO Y LOGIN ---
+// --- RUTAS DE ACCESO ---
 app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
     try {
@@ -76,76 +72,78 @@ app.post('/api/login', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.post('/api/subir', verificarToken, upload.single('archivo'), async (req, res) => {
-    const { tipo_documento, nombre_user } = req.body; 
-    const usuario_id = req.user.id;
+// --- RUTAS ADMINISTRATIVAS DE USUARIOS ---
+app.post('/api/admin/crear-usuario', verificarToken, async (req, res) => {
+    if (req.user.rol !== 'admin') return res.status(403).json({ error: 'No autorizado' });
+    const { username, password, nombre_completo } = req.body;
     try {
         await pool.query(
-            'INSERT INTO documentos (usuario_id, tipo_documento, url_cloudinary, nombre_user) VALUES ($1, $2, $3, $4)', 
-            [usuario_id, tipo_documento, req.file.path, nombre_user]
+            'INSERT INTO usuarios (username, password_hash, nombre_completo, rol) VALUES ($1, $2, $3, $4)',
+            [username, password, nombre_completo, 'user']
         );
-        res.json({ message: 'Éxito', url: req.file.path });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+        res.json({ message: 'Usuario creado con éxito' });
+    } catch (err) { res.status(500).json({ error: 'El usuario ya existe o error en DB' }); }
 });
 
-// --- 6. RUTAS DE ADMIN ---
-
-// Gestión de Empleados y Documentos Individuales
 app.get('/api/admin/empleados', verificarToken, async (req, res) => {
     if (req.user.rol !== 'admin') return res.status(403).json({ error: 'No autorizado' });
-    const result = await pool.query("SELECT id, nombre_completo FROM usuarios WHERE rol = 'user'");
+    const result = await pool.query("SELECT id, nombre_completo FROM usuarios WHERE rol = 'user' ORDER BY nombre_completo ASC");
     res.json(result.rows);
 });
 
+// --- GESTIÓN DE DOCUMENTOS POR USUARIO (ADMIN) ---
 app.get('/api/admin/documentos/:id', verificarToken, async (req, res) => {
     if (req.user.rol !== 'admin') return res.status(403).json({ error: 'No autorizado' });
     const result = await pool.query('SELECT * FROM documentos WHERE usuario_id = $1', [req.params.id]);
     res.json(result.rows);
 });
 
+app.post('/api/admin/subir-a-usuario', verificarToken, upload.single('archivo'), async (req, res) => {
+    if (req.user.rol !== 'admin') return res.status(403).json({ error: 'No autorizado' });
+    const { tipo_documento, usuario_id, nombre_user } = req.body;
+    try {
+        await pool.query(
+            'INSERT INTO documentos (usuario_id, tipo_documento, url_cloudinary, nombre_user) VALUES ($1, $2, $3, $4)', 
+            [usuario_id, tipo_documento, req.file.path, nombre_user]
+        );
+        res.json({ message: 'Documento cargado correctamente' });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.delete('/api/admin/documentos/:id', verificarToken, async (req, res) => {
     if (req.user.rol !== 'admin') return res.status(403).json({ error: 'No autorizado' });
     try {
-        const result = await pool.query('DELETE FROM documentos WHERE id = $1', [req.params.id]);
-        if (result.rowCount === 0) return res.status(404).json({ error: 'No encontrado' });
-        res.json({ message: 'Registro eliminado correctamente' });
+        await pool.query('DELETE FROM documentos WHERE id = $1', [req.params.id]);
+        res.json({ message: 'Eliminado' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- NUEVAS RUTAS: GESTIÓN EMPRESARIAL ---
-
-// Obtener todos los documentos de la empresa
+// --- DOCUMENTOS EMPRESA ---
 app.get('/api/admin/documentos-empresa', verificarToken, async (req, res) => {
     if (req.user.rol !== 'admin') return res.status(403).json({ error: 'No autorizado' });
-    try {
-        const result = await pool.query('SELECT * FROM documentos_empresa ORDER BY id DESC');
-        res.json(result.rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    const result = await pool.query('SELECT * FROM documentos_empresa ORDER BY id DESC');
+    res.json(result.rows);
 });
 
-// Eliminar documento de empresa
-app.delete('/api/admin/documentos-empresa/:id', verificarToken, async (req, res) => {
-    if (req.user.rol !== 'admin') return res.status(403).json({ error: 'No autorizado' });
-    try {
-        const result = await pool.query('DELETE FROM documentos_empresa WHERE id = $1', [req.params.id]);
-        if (result.rowCount === 0) return res.status(404).json({ error: 'No encontrado' });
-        res.json({ message: 'Documento empresarial eliminado' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// Subir documento de empresa
 app.post('/api/subir-empresa', verificarToken, upload.single('archivo'), async (req, res) => {
     if (req.user.rol !== 'admin') return res.status(403).json({ error: 'No autorizado' });
     const { tipo_documento } = req.body;
     try {
         await pool.query('INSERT INTO documentos_empresa (tipo_documento, url_cloudinary) VALUES ($1, $2)', [tipo_documento, req.file.path]);
-        res.json({ message: 'Documento institucional guardado' });
+        res.json({ message: 'Ok' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Manejo de errores Multer/PDF
+app.delete('/api/admin/documentos-empresa/:id', verificarToken, async (req, res) => {
+    if (req.user.rol !== 'admin') return res.status(403).json({ error: 'No autorizado' });
+    try {
+        await pool.query('DELETE FROM documentos_empresa WHERE id = $1', [req.params.id]);
+        res.json({ message: 'Eliminado' });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.use((err, req, res, next) => {
-    if (err.message === 'SOLO_PDF_PERMITIDO') return res.status(400).json({ error: 'El archivo debe ser un PDF' });
+    if (err.message === 'SOLO_PDF_PERMITIDO') return res.status(400).json({ error: 'Solo PDFs' });
     res.status(500).json({ error: err.message });
 });
 
