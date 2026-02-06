@@ -43,21 +43,7 @@ const verificarToken = (req, res, next) => {
     } catch (err) { res.status(400).json({ error: 'Token no válido' }); }
 };
 
-// LOGIN
-app.post('/api/login', async (req, res) => {
-    const { username, password } = req.body;
-    try {
-        const result = await pool.query('SELECT * FROM usuarios WHERE username = $1', [username]);
-        if (result.rows.length === 0 || password !== result.rows[0].cedula) {
-            return res.status(400).json({ error: 'Credenciales incorrectas' });
-        }
-        const user = result.rows[0];
-        const token = jwt.sign({ id: user.id, rol: user.rol }, process.env.JWT_SECRET, { expiresIn: '8h' });
-        res.json({ token, rol: user.rol, nombre: user.nombre_completo });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// INDICADORES (NUEVO)
+// --- ENDPOINT DE INDICADORES ---
 app.get('/api/admin/estadisticas', verificarToken, async (req, res) => {
     try {
         const totalTrabajadores = await pool.query("SELECT COUNT(*) FROM usuarios WHERE rol = 'user'");
@@ -70,6 +56,20 @@ app.get('/api/admin/estadisticas', verificarToken, async (req, res) => {
             totalTrabajadores: parseInt(totalTrabajadores.rows[0].count),
             detalles: conteoDocs.rows
         });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// LOGIN
+app.post('/api/login', async (req, res) => {
+    const { username, password } = req.body;
+    try {
+        const result = await pool.query('SELECT * FROM usuarios WHERE username = $1', [username]);
+        if (result.rows.length === 0 || password !== result.rows[0].cedula) {
+            return res.status(400).json({ error: 'Credenciales incorrectas' });
+        }
+        const user = result.rows[0];
+        const token = jwt.sign({ id: user.id, rol: user.rol }, process.env.JWT_SECRET, { expiresIn: '8h' });
+        res.json({ token, rol: user.rol, nombre: user.nombre_completo });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -136,4 +136,4 @@ app.get('/api/admin/documentos/:id', verificarToken, async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Servidor en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Servidor listo en puerto ${PORT}`));
