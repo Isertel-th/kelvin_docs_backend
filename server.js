@@ -43,44 +43,40 @@ const verificarToken = (req, res, next) => {
     } catch (err) { res.status(400).json({ error: 'Token no válido' }); }
 };
 
-// --- LOGIN ---
+// LOGIN (Usa cédula como password)
 app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
     try {
         const result = await pool.query('SELECT * FROM usuarios WHERE username = $1', [username]);
-        if (result.rows.length === 0 || password !== result.rows[0].password_hash) {
+        if (result.rows.length === 0 || password !== result.rows[0].cedula) {
             return res.status(400).json({ error: 'Credenciales incorrectas' });
         }
         const user = result.rows[0];
         const token = jwt.sign({ id: user.id, rol: user.rol }, process.env.JWT_SECRET, { expiresIn: '8h' });
-        res.json({ token, rol: user.rol, nombre: user.nombre_completo });
+        res.json({ token, rol: user.rol, nombre: user.primer_nombre });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- NUEVA RUTA: CREAR USUARIO ---
+// CREAR USUARIO (4 campos + Cédula)
 app.post('/api/admin/crear-usuario', verificarToken, async (req, res) => {
     if (req.user.rol !== 'admin') return res.status(403).json({ error: 'No autorizado' });
-    const { username, password_hash, nombre_completo } = req.body;
+    const { cedula, p_nom, s_nom, p_ape, s_ape } = req.body;
     try {
         await pool.query(
-            'INSERT INTO usuarios (username, password_hash, nombre_completo, rol) VALUES ($1, $2, $3, $4)',
-            [username, password_hash, nombre_completo, 'user']
+            'INSERT INTO usuarios (username, cedula, primer_nombre, segundo_nombre, primer_apellido, segundo_apellido, rol) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+            [cedula, cedula, p_nom, s_nom, p_ape, s_ape, 'user']
         );
-        res.json({ message: 'Usuario creado' });
+        res.json({ message: 'Ok' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- RUTAS DE GESTIÓN (TUS ORIGINALES) ---
+// LISTAR EMPLEADOS
 app.get('/api/admin/empleados', verificarToken, async (req, res) => {
-    const result = await pool.query("SELECT id, nombre_completo FROM usuarios WHERE rol = 'user' ORDER BY nombre_completo ASC");
+    const result = await pool.query("SELECT * FROM usuarios WHERE rol = 'user' ORDER BY primer_apellido ASC");
     res.json(result.rows);
 });
 
-app.get('/api/admin/documentos/:id', verificarToken, async (req, res) => {
-    const result = await pool.query('SELECT * FROM documentos WHERE usuario_id = $1', [req.params.id]);
-    res.json(result.rows);
-});
-
+// SUBIR DOCS TRABAJADOR
 app.post('/api/admin/subir-a-usuario', verificarToken, upload.single('archivo'), async (req, res) => {
     const { tipo_documento, usuario_id, nombre_user } = req.body;
     try {
@@ -92,14 +88,7 @@ app.post('/api/admin/subir-a-usuario', verificarToken, upload.single('archivo'),
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.delete('/api/admin/documentos/:id', verificarToken, async (req, res) => {
-    try {
-        await pool.query('DELETE FROM documentos WHERE id = $1', [req.params.id]);
-        res.json({ message: 'Eliminado' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// DOCUMENTOS EMPRESA (TUS ORIGINALES)
+// GESTIÓN DOCUMENTOS EMPRESA
 app.get('/api/admin/documentos-empresa', verificarToken, async (req, res) => {
     const result = await pool.query('SELECT * FROM documentos_empresa ORDER BY id DESC');
     res.json(result.rows);
@@ -113,11 +102,21 @@ app.post('/api/subir-empresa', verificarToken, upload.single('archivo'), async (
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ELIMINACIÓN GENÉRICA
+app.delete('/api/admin/documentos/:id', verificarToken, async (req, res) => {
+    await pool.query('DELETE FROM documentos WHERE id = $1', [req.params.id]);
+    res.json({ message: 'Ok' });
+});
+
 app.delete('/api/admin/documentos-empresa/:id', verificarToken, async (req, res) => {
-    try {
-        await pool.query('DELETE FROM documentos_empresa WHERE id = $1', [req.params.id]);
-        res.json({ message: 'Ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    await pool.query('DELETE FROM documentos_empresa WHERE id = $1', [req.params.id]);
+    res.json({ message: 'Ok' });
+});
+
+// LISTAR DOCUMENTOS DE UN USUARIO
+app.get('/api/admin/documentos/:id', verificarToken, async (req, res) => {
+    const result = await pool.query('SELECT * FROM documentos WHERE usuario_id = $1', [req.params.id]);
+    res.json(result.rows);
 });
 
 const PORT = process.env.PORT || 3000;
