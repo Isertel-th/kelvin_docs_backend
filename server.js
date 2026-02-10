@@ -158,7 +158,7 @@ app.post('/api/subir-empresa', verificarToken, upload.single('archivo'), async (
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ELIMINACIÓN
+// ELIMINACIIIIÓN
 app.delete('/api/admin/documentos/:id', verificarToken, async (req, res) => {
     const esPasivo = req.query.pasivo === 'true';
     const tabla = esPasivo ? 'documentos_pasivos' : 'documentos';
