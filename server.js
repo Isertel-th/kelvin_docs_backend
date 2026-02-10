@@ -73,14 +73,14 @@ app.post('/api/login', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// CREAR USUARIO
+// CREAR USUARIO (ACTUALIZADO CON FECHA_INGRESO)
 app.post('/api/admin/crear-usuario', verificarToken, async (req, res) => {
     if (req.user.rol !== 'admin') return res.status(403).json({ error: 'No autorizado' });
-    const { cedula, nombre_completo } = req.body;
+    const { cedula, nombre_completo, fecha_ingreso } = req.body;
     try {
         await pool.query(
-            'INSERT INTO usuarios (username, cedula, nombre_completo, rol) VALUES ($1, $2, $3, $4)',
-            [cedula, cedula, nombre_completo, 'user']
+            'INSERT INTO usuarios (username, cedula, nombre_completo, rol, fecha_ingreso) VALUES ($1, $2, $3, $4, $5)',
+            [cedula, cedula, nombre_completo, 'user', fecha_ingreso || null]
         );
         res.json({ message: 'Ok' });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -98,7 +98,7 @@ app.get('/api/admin/pasivos', verificarToken, async (req, res) => {
     res.json(result.rows);
 });
 
-// MOVER A PASIVO (TRANSFORMACIÓN)
+// MOVER A PASIVO (ACTUALIZADO PARA TRANSFERIR FECHA_INGRESO)
 app.post('/api/admin/mover-a-pasivo/:id', verificarToken, async (req, res) => {
     const client = await pool.connect();
     try {
@@ -108,8 +108,8 @@ app.post('/api/admin/mover-a-pasivo/:id', verificarToken, async (req, res) => {
         const u = userRes.rows[0];
 
         const insertPasivo = await client.query(
-            'INSERT INTO pasivos (username, cedula, nombre_completo, rol) VALUES ($1, $2, $3, $4) RETURNING id',
-            [u.username, u.cedula, u.nombre_completo, u.rol]
+            'INSERT INTO pasivos (username, cedula, nombre_completo, rol, fecha_ingreso) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+            [u.username, u.cedula, u.nombre_completo, u.rol, u.fecha_ingreso]
         );
         const nuevoId = insertPasivo.rows[0].id;
 
@@ -130,7 +130,7 @@ app.post('/api/admin/mover-a-pasivo/:id', verificarToken, async (req, res) => {
     } finally { client.release(); }
 });
 
-// SUBIR DOCS TRABAJADOR (ACTIVO O PASIVO)
+// SUBIR DOCS TRABAJADOR
 app.post('/api/admin/subir-a-usuario', verificarToken, upload.single('archivo'), async (req, res) => {
     const { tipo_documento, usuario_id, nombre_user, fecha_caducidad, es_pasivo } = req.body;
     const tabla = es_pasivo === 'true' ? 'documentos_pasivos' : 'documentos';
@@ -158,7 +158,6 @@ app.post('/api/subir-empresa', verificarToken, upload.single('archivo'), async (
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ELIMINACIIIIÓN
 app.delete('/api/admin/documentos/:id', verificarToken, async (req, res) => {
     const esPasivo = req.query.pasivo === 'true';
     const tabla = esPasivo ? 'documentos_pasivos' : 'documentos';
