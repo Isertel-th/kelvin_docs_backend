@@ -35,15 +35,15 @@ const upload = multer({ storage });
 
 const verificarToken = (req, res, next) => {
     const token = req.header('Authorization');
-    if (!token) return res.status(401).json({ error: 'Acceso denegado' });
+    if (!token) return res.status(401).json({ error: 'Acceso denegado (No hay token)' });
     try {
         const verificado = jwt.verify(token.replace('Bearer ', ''), process.env.JWT_SECRET);
         req.user = verificado;
         next();
-    } catch (err) { res.status(400).json({ error: 'Token no válido' }); }
+    } catch (err) { res.status(400).json({ error: 'Token no válido o expirado' }); }
 };
 
-// --- ENDPOINT DE INDICADORES ---
+// INDICADORES
 app.get('/api/admin/estadisticas', verificarToken, async (req, res) => {
     try {
         const totalTrabajadores = await pool.query("SELECT COUNT(*) FROM usuarios WHERE rol = 'user'");
@@ -73,9 +73,13 @@ app.post('/api/login', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// CREAR USUARIO (ACTUALIZADO CON FECHA_INGRESO)
+// CREAR USUARIO
 app.post('/api/admin/crear-usuario', verificarToken, async (req, res) => {
-    if (req.user.rol !== 'admin') return res.status(403).json({ error: 'No autorizado' });
+    // IMPORTANTE: Tu usuario actual en la DB debe tener el rol 'admin'
+    if (req.user.rol !== 'admin') {
+        return res.status(403).json({ error: 'No tienes permisos de administrador para realizar esta acción' });
+    }
+    
     const { cedula, nombre_completo, fecha_ingreso } = req.body;
     try {
         await pool.query(
@@ -83,10 +87,13 @@ app.post('/api/admin/crear-usuario', verificarToken, async (req, res) => {
             [cedula, cedula, nombre_completo, 'user', fecha_ingreso || null]
         );
         res.json({ message: 'Ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { 
+        console.error(err);
+        res.status(500).json({ error: "Error al insertar en la base de datos: " + err.message }); 
+    }
 });
 
-// LISTAR EMPLEADOS (ACTIVOS)
+// LISTAR EMPLEADOS
 app.get('/api/admin/empleados', verificarToken, async (req, res) => {
     const result = await pool.query("SELECT * FROM usuarios WHERE rol = 'user' ORDER BY nombre_completo ASC");
     res.json(result.rows);
@@ -98,7 +105,7 @@ app.get('/api/admin/pasivos', verificarToken, async (req, res) => {
     res.json(result.rows);
 });
 
-// MOVER A PASIVO (ACTUALIZADO PARA TRANSFERIR FECHA_INGRESO)
+// MOVER A PASIVO
 app.post('/api/admin/mover-a-pasivo/:id', verificarToken, async (req, res) => {
     const client = await pool.connect();
     try {
