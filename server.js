@@ -16,6 +16,21 @@ const pool = new Pool({
     ssl: { rejectUnauthorized: false }
 });
 
+
+
+// Agrega este log justo debajo
+console.log("Intentando conectar a:", process.env.DATABASE_URL ? process.env.DATABASE_URL.split('@')[1] : "URL NO DEFINIDA");
+
+pool.query('SELECT NOW()', (err, res) => {
+    if (err) {
+        console.error('❌ Error de conexión a la DB:', err.stack);
+    } else {
+        console.log('✅ Conexión exitosa a la base de datos en:', res.rows[0].now);
+    }
+});
+
+
+
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
