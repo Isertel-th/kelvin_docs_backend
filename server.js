@@ -16,9 +16,6 @@ const pool = new Pool({
     ssl: { rejectUnauthorized: false }
 });
 
-
-
-// Agrega este log justo debajo
 console.log("Intentando conectar a:", process.env.DATABASE_URL ? process.env.DATABASE_URL.split('@')[1] : "URL NO DEFINIDA");
 
 pool.query('SELECT NOW()', (err, res) => {
@@ -29,19 +26,18 @@ pool.query('SELECT NOW()', (err, res) => {
     }
 });
 
-
-
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
     api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
+// Configuración de almacenamiento para fotos y PDFs
 const storage = new CloudinaryStorage({
     cloudinary: cloudinary,
     params: async (req, file) => ({
         folder: 'sistema_vehicular',
-        format: 'pdf',
+        format: file.mimetype === 'application/pdf' ? 'pdf' : 'jpg',
         public_id: `${Date.now()}_${file.originalname.split('.')[0]}`
     })
 });
@@ -88,18 +84,19 @@ app.post('/api/login', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// CREAR USUARIO
-app.post('/api/admin/crear-usuario', verificarToken, async (req, res) => {
-    // IMPORTANTE: Tu usuario actual en la DB debe tener el rol 'admin'
+// CREAR USUARIO (PERFECCIONADO)
+app.post('/api/admin/crear-usuario', verificarToken, upload.single('foto'), async (req, res) => {
     if (req.user.rol !== 'admin') {
-        return res.status(403).json({ error: 'No tienes permisos de administrador para realizar esta acción' });
+        return res.status(403).json({ error: 'No tienes permisos de administrador' });
     }
     
-    const { cedula, nombre_completo, fecha_ingreso } = req.body;
+    const { cedula, nombre_completo, fecha_ingreso, correo, celular, direccion } = req.body;
+    const foto_url = req.file ? req.file.path : null;
+
     try {
         await pool.query(
-            'INSERT INTO usuarios (username, cedula, nombre_completo, rol, fecha_ingreso) VALUES ($1, $2, $3, $4, $5)',
-            [cedula, cedula, nombre_completo, 'user', fecha_ingreso || null]
+            'INSERT INTO usuarios (username, cedula, nombre_completo, rol, fecha_ingreso, correo, celular, direccion, foto_url) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+            [cedula, cedula, nombre_completo, 'user', fecha_ingreso || null, correo, celular, direccion, foto_url]
         );
         res.json({ message: 'Ok' });
     } catch (err) { 
@@ -120,7 +117,7 @@ app.get('/api/admin/pasivos', verificarToken, async (req, res) => {
     res.json(result.rows);
 });
 
-// MOVER A PASIVO
+// MOVER A PASIVO (ACTUALIZADO PARA INCLUIR NUEVOS CAMPOS)
 app.post('/api/admin/mover-a-pasivo/:id', verificarToken, async (req, res) => {
     const client = await pool.connect();
     try {
@@ -130,8 +127,8 @@ app.post('/api/admin/mover-a-pasivo/:id', verificarToken, async (req, res) => {
         const u = userRes.rows[0];
 
         const insertPasivo = await client.query(
-            'INSERT INTO pasivos (username, cedula, nombre_completo, rol, fecha_ingreso) VALUES ($1, $2, $3, $4, $5) RETURNING id',
-            [u.username, u.cedula, u.nombre_completo, u.rol, u.fecha_ingreso]
+            'INSERT INTO pasivos (username, cedula, nombre_completo, rol, fecha_ingreso, correo, celular, direccion, foto_url) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id',
+            [u.username, u.cedula, u.nombre_completo, u.rol, u.fecha_ingreso, u.correo, u.celular, u.direccion, u.foto_url]
         );
         const nuevoId = insertPasivo.rows[0].id;
 
