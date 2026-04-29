@@ -84,7 +84,7 @@ app.post('/api/login', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// CREAR USUARIO (PERFECCIONADO)
+// CREAR USUARIO
 app.post('/api/admin/crear-usuario', verificarToken, upload.single('foto'), async (req, res) => {
     if (req.user.rol !== 'admin') {
         return res.status(403).json({ error: 'No tienes permisos de administrador' });
@@ -117,7 +117,7 @@ app.get('/api/admin/pasivos', verificarToken, async (req, res) => {
     res.json(result.rows);
 });
 
-// MOVER A PASIVO (ACTUALIZADO PARA INCLUIR NUEVOS CAMPOS)
+// MOVER A PASIVO
 app.post('/api/admin/mover-a-pasivo/:id', verificarToken, async (req, res) => {
     const client = await pool.connect();
     try {
