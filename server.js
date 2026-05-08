@@ -165,53 +165,17 @@ app.post('/api/admin/subir-a-usuario', verificarToken, upload.single('archivo'),
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- RUTAS DE DOCUMENTOS DE EMPRESA ---
-
 app.get('/api/admin/documentos-empresa', verificarToken, async (req, res) => {
-    // Agregamos protección: solo admin y doc pueden ver estos documentos
-    if (req.user.rol !== 'admin' && req.user.rol !== 'doc') {
-        return res.status(403).json({ error: 'No tienes permisos' });
-    }
-    try {
-        const result = await pool.query('SELECT * FROM documentos_empresa ORDER BY id DESC');
-        res.json(result.rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    const result = await pool.query('SELECT * FROM documentos_empresa ORDER BY id DESC');
+    res.json(result.rows);
 });
 
 app.post('/api/subir-empresa', verificarToken, upload.single('archivo'), async (req, res) => {
-    // Agregamos protección: solo admin y doc pueden subir documentos de empresa
-    if (req.user.rol !== 'admin' && req.user.rol !== 'doc') {
-        return res.status(403).json({ error: 'No tienes permisos' });
-    }
     const { tipo_documento } = req.body;
     try {
         await pool.query('INSERT INTO documentos_empresa (tipo_documento, url_cloudinary) VALUES ($1, $2)', 
             [tipo_documento, req.file.path]);
         res.json({ message: 'Ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.delete('/api/admin/documentos-empresa/:id', verificarToken, async (req, res) => {
-    if (req.user.rol !== 'admin' && req.user.rol !== 'doc') {
-        return res.status(403).json({ error: 'No tienes permisos' });
-    }
-    try {
-        await pool.query('DELETE FROM documentos_empresa WHERE id = $1', [req.params.id]);
-        res.json({ message: 'Ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// --- RUTAS DE DOCUMENTOS DE USUARIOS ---
-
-app.get('/api/admin/documentos/:id', verificarToken, async (req, res) => {
-    if (req.user.rol !== 'admin' && req.user.rol !== 'doc') {
-        return res.status(403).json({ error: 'No tienes permisos' });
-    }
-    const esPasivo = req.query.pasivo === 'true';
-    const tabla = esPasivo ? 'documentos_pasivos' : 'documentos';
-    try {
-        const result = await pool.query(`SELECT * FROM ${tabla} WHERE usuario_id = $1`, [req.params.id]);
-        res.json(result.rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -221,36 +185,27 @@ app.delete('/api/admin/documentos/:id', verificarToken, async (req, res) => {
     }
     const esPasivo = req.query.pasivo === 'true';
     const tabla = esPasivo ? 'documentos_pasivos' : 'documentos';
-    try {
-        await pool.query(`DELETE FROM ${tabla} WHERE id = $1`, [req.params.id]);
-        res.json({ message: 'Ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    await pool.query(`DELETE FROM ${tabla} WHERE id = $1`, [req.params.id]);
+    res.json({ message: 'Ok' });
 });
 
-// --- RUTAS DE CONSULTA MÉDICA / ADMINISTRATIVA (NUEVAS) ---
-
-app.get('/api/admin/empleados', verificarToken, async (req, res) => {
+app.delete('/api/admin/documentos-empresa/:id', verificarToken, async (req, res) => {
     if (req.user.rol !== 'admin' && req.user.rol !== 'doc') {
         return res.status(403).json({ error: 'No tienes permisos' });
     }
-    try {
-        // Filtra para que no se vean ni admins ni docs en la lista
-        const result = await pool.query("SELECT * FROM usuarios WHERE rol = 'user' ORDER BY nombre_completo ASC");
-        res.json(result.rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    await pool.query('DELETE FROM documentos_empresa WHERE id = $1', [req.params.id]);
+    res.json({ message: 'Ok' });
 });
 
-app.get('/api/admin/pasivos', verificarToken, async (req, res) => {
+app.get('/api/admin/documentos/:id', verificarToken, async (req, res) => {
     if (req.user.rol !== 'admin' && req.user.rol !== 'doc') {
         return res.status(403).json({ error: 'No tienes permisos' });
     }
-    try {
-        const result = await pool.query("SELECT * FROM pasivos ORDER BY nombre_completo ASC");
-        res.json(result.rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    const esPasivo = req.query.pasivo === 'true';
+    const tabla = esPasivo ? 'documentos_pasivos' : 'documentos';
+    const result = await pool.query(`SELECT * FROM ${tabla} WHERE usuario_id = $1`, [req.params.id]);
+    res.json(result.rows);
 });
-
-// --- INICIO DEL SERVIDOR ---
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor listo en puerto ${PORT}`));
