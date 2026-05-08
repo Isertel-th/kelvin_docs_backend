@@ -81,8 +81,10 @@ app.post('/api/login', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// --- RUTA ADAPTADA ---
 app.post('/api/admin/crear-usuario', verificarToken, upload.single('foto'), async (req, res) => {
-    if (req.user.rol !== 'admin') {
+    // Permitir acceso a admin y doc
+    if (req.user.rol !== 'admin' && req.user.rol !== 'doc') {
         return res.status(403).json({ error: 'No tienes permisos de administrador' });
     }
     const { cedula, nombre_completo, fecha_ingreso, correo, celular, direccion } = req.body;
