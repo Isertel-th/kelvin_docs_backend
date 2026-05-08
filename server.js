@@ -81,9 +81,7 @@ app.post('/api/login', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- RUTA ADAPTADA ---
 app.post('/api/admin/crear-usuario', verificarToken, upload.single('foto'), async (req, res) => {
-    // Permitir acceso a admin y doc
     if (req.user.rol !== 'admin' && req.user.rol !== 'doc') {
         return res.status(403).json({ error: 'No tienes permisos de administrador' });
     }
@@ -139,6 +137,10 @@ app.post('/api/admin/mover-a-pasivo/:id', verificarToken, async (req, res) => {
 });
 
 app.post('/api/admin/subir-a-usuario', verificarToken, upload.single('archivo'), async (req, res) => {
+    // CORRECCIÓN: Permitir que ADMIN y DOC suban archivos
+    if (req.user.rol !== 'admin' && req.user.rol !== 'doc') {
+        return res.status(403).json({ error: 'No tienes permisos para subir archivos' });
+    }
     const { tipo_documento, usuario_id, nombre_user, es_pasivo } = req.body;
     const tabla = es_pasivo === 'true' ? 'documentos_pasivos' : 'documentos';
     try {
