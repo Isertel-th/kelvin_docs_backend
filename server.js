@@ -53,7 +53,11 @@ const verificarToken = (req, res, next) => {
     } catch (err) { res.status(400).json({ error: 'Token no válido o expirado' }); }
 };
 
+// Modificado para que admin y doc vean estadísticas
 app.get('/api/admin/estadisticas', verificarToken, async (req, res) => {
+    if (req.user.rol !== 'admin' && req.user.rol !== 'doc') {
+        return res.status(403).json({ error: 'No tienes permisos suficientes' });
+    }
     try {
         const totalTrabajadores = await pool.query("SELECT COUNT(*) FROM usuarios WHERE rol = 'user'");
         const conteoDocs = await pool.query(`
@@ -81,8 +85,9 @@ app.post('/api/login', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Modificado para permitir creación de usuarios por admin y doc
 app.post('/api/admin/crear-usuario', verificarToken, upload.single('foto'), async (req, res) => {
-    if (req.user.rol !== 'admin') {
+    if (req.user.rol !== 'admin' && req.user.rol !== 'doc') {
         return res.status(403).json({ error: 'No tienes permisos de administrador' });
     }
     const { cedula, nombre_completo, fecha_ingreso, correo, celular, direccion } = req.body;
@@ -100,16 +105,25 @@ app.post('/api/admin/crear-usuario', verificarToken, upload.single('foto'), asyn
 });
 
 app.get('/api/admin/empleados', verificarToken, async (req, res) => {
+    if (req.user.rol !== 'admin' && req.user.rol !== 'doc') {
+        return res.status(403).json({ error: 'No tienes permisos' });
+    }
     const result = await pool.query("SELECT * FROM usuarios WHERE rol = 'user' ORDER BY nombre_completo ASC");
     res.json(result.rows);
 });
 
 app.get('/api/admin/pasivos', verificarToken, async (req, res) => {
+    if (req.user.rol !== 'admin' && req.user.rol !== 'doc') {
+        return res.status(403).json({ error: 'No tienes permisos' });
+    }
     const result = await pool.query("SELECT * FROM pasivos ORDER BY nombre_completo ASC");
     res.json(result.rows);
 });
 
 app.post('/api/admin/mover-a-pasivo/:id', verificarToken, async (req, res) => {
+    if (req.user.rol !== 'admin' && req.user.rol !== 'doc') {
+        return res.status(403).json({ error: 'No tienes permisos' });
+    }
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -137,6 +151,9 @@ app.post('/api/admin/mover-a-pasivo/:id', verificarToken, async (req, res) => {
 });
 
 app.post('/api/admin/subir-a-usuario', verificarToken, upload.single('archivo'), async (req, res) => {
+    if (req.user.rol !== 'admin' && req.user.rol !== 'doc') {
+        return res.status(403).json({ error: 'No tienes permisos' });
+    }
     const { tipo_documento, usuario_id, nombre_user, es_pasivo } = req.body;
     const tabla = es_pasivo === 'true' ? 'documentos_pasivos' : 'documentos';
     try {
@@ -163,6 +180,9 @@ app.post('/api/subir-empresa', verificarToken, upload.single('archivo'), async (
 });
 
 app.delete('/api/admin/documentos/:id', verificarToken, async (req, res) => {
+    if (req.user.rol !== 'admin' && req.user.rol !== 'doc') {
+        return res.status(403).json({ error: 'No tienes permisos' });
+    }
     const esPasivo = req.query.pasivo === 'true';
     const tabla = esPasivo ? 'documentos_pasivos' : 'documentos';
     await pool.query(`DELETE FROM ${tabla} WHERE id = $1`, [req.params.id]);
@@ -170,11 +190,17 @@ app.delete('/api/admin/documentos/:id', verificarToken, async (req, res) => {
 });
 
 app.delete('/api/admin/documentos-empresa/:id', verificarToken, async (req, res) => {
+    if (req.user.rol !== 'admin' && req.user.rol !== 'doc') {
+        return res.status(403).json({ error: 'No tienes permisos' });
+    }
     await pool.query('DELETE FROM documentos_empresa WHERE id = $1', [req.params.id]);
     res.json({ message: 'Ok' });
 });
 
 app.get('/api/admin/documentos/:id', verificarToken, async (req, res) => {
+    if (req.user.rol !== 'admin' && req.user.rol !== 'doc') {
+        return res.status(403).json({ error: 'No tienes permisos' });
+    }
     const esPasivo = req.query.pasivo === 'true';
     const tabla = esPasivo ? 'documentos_pasivos' : 'documentos';
     const result = await pool.query(`SELECT * FROM ${tabla} WHERE usuario_id = $1`, [req.params.id]);
