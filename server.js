@@ -250,6 +250,30 @@ app.get('/api/admin/pasivos', verificarToken, async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// NUEVA RUTA: Obtener todos los certificados médicos (Activos y Pasivos) para el Doctor
+app.get('/api/doctor/todos-certificados', verificarToken, async (req, res) => {
+    if (req.user.rol !== 'admin' && req.user.rol !== 'doc') {
+        return res.status(403).json({ error: 'No tienes permisos' });
+    }
+    try {
+        // Buscamos en ambas tablas documentos que tengan relación con certificados médicos
+        const query = `
+            SELECT id, usuario_id, tipo_documento, url_cloudinary, nombre_user, created_at, 'ACTIVO' as estado_laboral 
+            FROM documentos 
+            WHERE tipo_documento ILIKE '%médico%' OR tipo_documento ILIKE '%reposo%'
+            UNION ALL
+            SELECT id, usuario_id, tipo_documento, url_cloudinary, nombre_user, created_at, 'PASIVO' as estado_laboral 
+            FROM documentos_pasivos 
+            WHERE tipo_documento ILIKE '%médico%' OR tipo_documento ILIKE '%reposo%'
+            ORDER BY created_at DESC
+        `;
+        const result = await pool.query(query);
+        res.json(result.rows);
+    } catch (err) { 
+        res.status(500).json({ error: err.message }); 
+    }
+});
+
 // --- INICIO DEL SERVIDOR ---
 
 const PORT = process.env.PORT || 3000;
