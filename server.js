@@ -222,38 +222,5 @@ app.delete('/api/admin/documentos-empresa/:id', verificarToken, async (req, res)
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- GESTIÓN DE CERTIFICADOS DE APTITUD (MÉDICO) ---
-
-// Obtener todos los documentos de aptitud
-app.get('/api/medico/certificados-aptitud', verificarToken, async (req, res) => {
-    try {
-        const result = await pool.query('SELECT * FROM certificados_aptitud ORDER BY created_at DESC');
-        res.json(result.rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// Subir nuevo documento de aptitud
-app.post('/api/medico/subir-aptitud', verificarToken, upload.single('archivo'), async (req, res) => {
-    const { usuario_id, tipo_usuario, nombre_user, tipo_documento, periodo_mes } = req.body;
-    try {
-        await pool.query(
-            'INSERT INTO certificados_aptitud (usuario_id, tipo_usuario, nombre_user, tipo_documento, periodo_mes, url_cloudinary) VALUES ($1, $2, $3, $4, $5, $6)',
-            [usuario_id, tipo_usuario, nombre_user, tipo_documento, periodo_mes, req.file.path]
-        );
-        res.json({ message: 'Ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// Eliminar documento de aptitud
-app.delete('/api/medico/certificados-aptitud/:id', verificarToken, async (req, res) => {
-    try {
-        await pool.query('DELETE FROM certificados_aptitud WHERE id = $1', [req.params.id]);
-        res.json({ message: 'Ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-
-
-
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
