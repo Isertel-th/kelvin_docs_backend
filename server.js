@@ -197,6 +197,36 @@ app.get('/api/doctor/certificados-globales', verificarToken, permisoAdminDoc, as
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+
+// --- NUEVAS RUTAS: CERTIFICADOS DE APTITUD (DOCTOR) ---
+
+app.post('/api/doctor/subir-aptitud', verificarToken, permisoAdminDoc, upload.single('archivo'), async (req, res) => {
+    const { tipo_documento, usuario_id, es_pasivo } = req.body;
+    try {
+        await pool.query(
+            `INSERT INTO certificados_aptitud (usuario_id, es_pasivo, tipo_documento, url_cloudinary) VALUES ($1, $2, $3, $4)`,
+            [usuario_id, es_pasivo === 'true', tipo_documento, req.file.path]
+        );
+        res.json({ message: 'Ok' });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/doctor/aptitud/:id', verificarToken, permisoAdminDoc, async (req, res) => {
+    const esPasivo = req.query.pasivo === 'true';
+    try {
+        const result = await pool.query(`SELECT * FROM certificados_aptitud WHERE usuario_id = $1 AND es_pasivo = $2 ORDER BY created_at DESC`, [req.params.id, esPasivo]);
+        res.json(result.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/doctor/aptitud/:id', verificarToken, permisoAdminDoc, async (req, res) => {
+    try {
+        await pool.query(`DELETE FROM certificados_aptitud WHERE id = $1`, [req.params.id]);
+        res.json({ message: 'Ok' });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
 // --- GESTIÓN EMPRESARIAL ---
 
 app.get('/api/admin/documentos-empresa', verificarToken, async (req, res) => {
