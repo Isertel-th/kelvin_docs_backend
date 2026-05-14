@@ -11,7 +11,7 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// Configuración de la base de datos PostgreSQL (Soporta UTF-8 por defecto)
+// Configuración de la base de datos PostgreSQL
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false }
@@ -38,6 +38,15 @@ const storage = new CloudinaryStorage({
 });
 
 const upload = multer({ storage });
+
+// --- FUNCIONES DE VALIDACIÓN ---
+const esCorreoValido = (email) => {
+    const dominiosPermitidos = ['gmail.com', 'gmail.es', 'outlook.com', 'outlook.es', 'hotmail.com', 'hotmail.es', 'isertel.com.ec']; 
+    const regexBase = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    if (!regexBase.test(email)) return false;
+    const dominio = email.split('@')[1].toLowerCase();
+    return dominiosPermitidos.includes(dominio);
+};
 
 const verificarToken = (req, res, next) => {
     const token = req.header('Authorization');
@@ -83,16 +92,25 @@ app.get('/api/admin/pasivos', verificarToken, permisoAdminDoc, async (req, res) 
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// CREACIÓN DE USUARIO CON VALIDACIÓN REFORZADA
 app.post('/api/admin/crear-usuario', verificarToken, upload.single('foto'), async (req, res) => {
     if (req.user.rol !== 'admin') return res.status(403).json({ error: 'Solo el admin crea usuarios' });
     
     const { cedula, nombre_completo, fecha_ingreso, correo, celular, direccion } = req.body;
     const foto_url = req.file ? req.file.path : null;
 
-    // VALIDACIÓN LADO DEL SERVIDOR (BACKUP)
+    // VALIDACIONES REFORZADAS
     if(!cedula || cedula.length !== 10) return res.status(400).json({ error: 'Cédula debe tener 10 dígitos' });
-    if(!nombre_completo || !correo || !foto_url) return res.status(400).json({ error: 'Faltan campos obligatorios o la foto' });
+    
+    const celularRegex = /^[0-9]{10}$/;
+    if(!celular || !celularRegex.test(celular)) {
+        return res.status(400).json({ error: 'El celular debe tener exactamente 10 dígitos numéricos' });
+    }
+
+    if(!correo || !esCorreoValido(correo)) {
+        return res.status(400).json({ error: 'Correo inválido o dominio no permitido' });
+    }
+
+    if(!nombre_completo || !foto_url) return res.status(400).json({ error: 'Faltan campos obligatorios o la foto' });
 
     try {
         await pool.query(
