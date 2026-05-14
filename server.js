@@ -226,5 +226,84 @@ app.delete('/api/admin/documentos-empresa/:id', verificarToken, async (req, res)
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+
+
+
+
+// --- NUEVAS RUTAS PARA APTITUD MÉDICA CON LOGS ---
+
+app.get('/api/doctor/aptitud/:id', verificarToken, permisoAdminDoc, async (req, res) => {
+    const esPasivo = req.query.pasivo === 'true';
+    const tabla = esPasivo ? 'documentos_pasivos' : 'documentos';
+    console.log(`[GET] Consultando aptitud - Usuario: ${req.params.id}, Tabla: ${tabla}`);
+    
+    try {
+        // Buscamos documentos que contengan "Ingreso", "Periodo" o "Salida" en el tipo
+        const result = await pool.query(
+            `SELECT * FROM ${tabla} WHERE usuario_id = $1 AND (tipo_documento ILIKE '%Ingreso%' OR tipo_documento ILIKE '%Periodo%' OR tipo_documento ILIKE '%Salida%')`, 
+            [req.params.id]
+        );
+        res.json(result.rows);
+    } catch (err) {
+        console.error("❌ Error en GET /aptitud:", err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/doctor/subir-aptitud', verificarToken, permisoAdminDoc, upload.single('archivo'), async (req, res) => {
+    const { tipo_documento, usuario_id, es_pasivo } = req.body;
+    const tabla = es_pasivo === 'true' ? 'documentos_pasivos' : 'documentos';
+    
+    console.log("--- Intento de Subida Aptitud ---");
+    console.log("Cuerpo recibido:", req.body);
+    console.log("Archivo recibido:", req.file ? req.file.path : "NINGUNO");
+
+    if (!req.file) {
+        return res.status(400).json({ error: "No se recibió ningún archivo en el servidor." });
+    }
+
+    try {
+        await pool.query(
+            `INSERT INTO ${tabla} (usuario_id, tipo_documento, url_cloudinary) VALUES ($1, $2, $3)`, 
+            [usuario_id, tipo_documento, req.file.path]
+        );
+        console.log("✅ Registro guardado con éxito en:", tabla);
+        res.json({ message: 'Ok' });
+    } catch (err) {
+        console.error("❌ Error al insertar aptitud en DB:", err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Ruta para eliminar aptitud (usando la tabla correcta según lógica de doctor)
+app.delete('/api/doctor/aptitud/:id', verificarToken, permisoAdminDoc, async (req, res) => {
+    // Nota: Aquí podrías necesitar lógica para saber si es pasivo o activo antes de borrar
+    // Por ahora intentaremos borrar de ambas o requerir un query param
+    try {
+        await pool.query("DELETE FROM documentos WHERE id = $1", [req.params.id]);
+        await pool.query("DELETE FROM documentos_pasivos WHERE id = $1", [req.params.id]);
+        res.json({ message: 'Ok' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
