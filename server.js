@@ -261,29 +261,42 @@ app.delete('/api/admin/documentos-empresa/:id', verificarToken, async (req, res)
 
 app.get('/api/doctor/aptitud/:id', verificarToken, permisoAdminDoc, async (req, res) => {
     const esPasivo = req.query.pasivo === 'true';
-    const tabla = esPasivo ? 'documentos_pasivos' : 'documentos';
-    console.log(`[GET] Consultando aptitud - Usuario: ${req.params.id}, Tabla: ${tabla}`);
+    const tablaPrincipal = esPasivo ? 'documentos_pasivos' : 'documentos';
     
     try {
-        // Buscamos documentos que contengan "Ingreso", "Periodo" o "Salida" en el tipo
-        const result = await pool.query(
-            `SELECT * FROM ${tabla} WHERE usuario_id = $1 AND (tipo_documento ILIKE '%Ingreso%' OR tipo_documento ILIKE '%Periodo%' OR tipo_documento ILIKE '%Salida%')`, 
-            [req.params.id]
-        );
+        // Usamos UNION ALL para traer lo de la tabla base Y lo de docus_medicos para ese usuario
+        const query = `
+            SELECT * FROM ${tablaPrincipal} 
+            WHERE usuario_id = $1 AND (tipo_documento ILIKE '%Ingreso%' OR tipo_documento ILIKE '%Periodo%' OR tipo_documento ILIKE '%Salida%')
+            UNION ALL
+            SELECT * FROM docus_medicos 
+            WHERE usuario_id = $1
+            ORDER BY created_at DESC
+        `;
+        const result = await pool.query(query, [req.params.id]);
         res.json(result.rows);
     } catch (err) {
         console.error("❌ Error en GET /aptitud:", err.message);
         res.status(500).json({ error: err.message });
     }
 });
+// server.js - Localiza esta ruta y reemplázala
 
 app.post('/api/doctor/subir-aptitud', verificarToken, permisoAdminDoc, upload.single('archivo'), async (req, res) => {
     const { tipo_documento, usuario_id, es_pasivo } = req.body;
-    const tabla = es_pasivo === 'true' ? 'documentos_pasivos' : 'documentos';
     
-    console.log("--- Intento de Subida Aptitud ---");
-    console.log("Cuerpo recibido:", req.body);
-    console.log("Archivo recibido:", req.file ? req.file.path : "NINGUNO");
+    // --- NUEVA LÓGICA DE DIRECCIONAMIENTO DE TABLA ---
+    let tabla;
+    
+    // Si el nombre del documento contiene "Certificado médico" o "Reposo", va a docus_medicos
+    if (tipo_documento.includes("Certificado médico") || tipo_documento.includes("Reposo médico")) {
+        tabla = 'docus_medicos';
+    } else {
+        // Si no, sigue la lógica normal de Activo (documentos) o Pasivo (documentos_pasivos)
+        tabla = es_pasivo === 'true' ? 'documentos_pasivos' : 'documentos';
+    }
+    
+    console.log(`[SUBIDA DOCTOR] Destino: ${tabla} - Tipo: ${tipo_documento}`);
 
     if (!req.file) {
         return res.status(400).json({ error: "No se recibió ningún archivo en el servidor." });
@@ -291,13 +304,14 @@ app.post('/api/doctor/subir-aptitud', verificarToken, permisoAdminDoc, upload.si
 
     try {
         await pool.query(
-            `INSERT INTO ${tabla} (usuario_id, tipo_documento, url_cloudinary) VALUES ($1, $2, $3)`, 
-            [usuario_id, tipo_documento, req.file.path]
+            `INSERT INTO ${tabla} (usuario_id, tipo_documento, url_cloudinary, nombre_user) VALUES ($1, $2, $3, $4)`, 
+            // Añadimos nombre_user si lo necesitas, o lo dejamos vacío si la tabla docus_medicos no lo requiere
+            [usuario_id, tipo_documento, req.file.path, req.body.nombre_user || 'Médico']
         );
         console.log("✅ Registro guardado con éxito en:", tabla);
         res.json({ message: 'Ok' });
     } catch (err) {
-        console.error("❌ Error al insertar aptitud en DB:", err.message);
+        console.error("❌ Error al insertar en DB:", err.message);
         res.status(500).json({ error: err.message });
     }
 });
