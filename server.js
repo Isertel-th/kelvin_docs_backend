@@ -59,11 +59,8 @@ const verificarToken = (req, res, next) => {
 };
 
 const permisoAdminDoc = (req, res, next) => {
-    if (req.user.rol === 'admin' || req.user.rol === 'doc') {
-        next();
-    } else {
-        res.status(403).json({ error: 'Acceso denegado: Se requiere rol de Administrador o Doctor' });
-    }
+    if (req.user.rol === 'admin' || req.user.rol === 'doc') next();
+    else res.status(403).json({ error: 'No tienes permisos' });
 };
 
 // --- RUTAS ---
@@ -228,86 +225,6 @@ app.delete('/api/admin/documentos-empresa/:id', verificarToken, async (req, res)
         res.json({ message: 'Ok' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
-
-
-
-
-
-
-
-
-
-// --- ENDPOINTS PARA DOCTOR (Sustituir por los anteriores al final de server.js) ---
-
-// 1. Obtener lista de empleados activos para el Doctor
-app.get('/api/doctor/activos', verificarToken, permisoAdminDoc, async (req, res) => {
-    try {
-        const result = await pool.query("SELECT id, nombre_completo, cedula FROM usuarios WHERE rol = 'user' ORDER BY nombre_completo ASC");
-        res.json(result.rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// 2. Obtener lista de empleados pasivos para el Doctor
-app.get('/api/doctor/pasivos', verificarToken, permisoAdminDoc, async (req, res) => {
-    try {
-        const result = await pool.query('SELECT id, nombre_completo, cedula FROM pasivos ORDER BY nombre_completo ASC');
-        res.json(result.rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// 3. Listar documentos de un empleado activo
-app.get('/api/doctor/documentos-activo/:id', verificarToken, permisoAdminDoc, async (req, res) => {
-    try {
-        const result = await pool.query('SELECT * FROM documentos WHERE usuario_id = $1 ORDER BY created_at DESC', [req.params.id]);
-        res.json(result.rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// 4. Listar documentos de un empleado pasivo
-app.get('/api/doctor/documentos-pasivo/:id', verificarToken, permisoAdminDoc, async (req, res) => {
-    try {
-        const result = await pool.query('SELECT * FROM documentos_pasivos WHERE usuario_id = $1 ORDER BY created_at DESC', [req.params.id]);
-        res.json(result.rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// 5. Subir documento a un activo
-app.post('/api/doctor/subir-activo/:id', verificarToken, permisoAdminDoc, upload.single('archivo'), async (req, res) => {
-    const { tipo_documento } = req.body;
-    const usuario_id = req.params.id;
-    try {
-        const user = await pool.query('SELECT nombre_completo FROM usuarios WHERE id = $1', [usuario_id]);
-        const nombre_user = user.rows[0]?.nombre_completo || 'Desconocido';
-
-        await pool.query(
-            'INSERT INTO documentos (usuario_id, tipo_documento, url_cloudinary, nombre_user) VALUES ($1, $2, $3, $4)', 
-            [usuario_id, tipo_documento, req.file.path, nombre_user]
-        );
-        res.json({ message: 'Ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// 6. Subir documento a un pasivo
-app.post('/api/doctor/subir-pasivo/:id', verificarToken, permisoAdminDoc, upload.single('archivo'), async (req, res) => {
-    const { tipo_documento } = req.body;
-    const usuario_id = req.params.id;
-    try {
-        const user = await pool.query('SELECT nombre_completo FROM pasivos WHERE id = $1', [usuario_id]);
-        const nombre_user = user.rows[0]?.nombre_completo || 'Desconocido';
-
-        await pool.query(
-            'INSERT INTO documentos_pasivos (usuario_id, tipo_documento, url_cloudinary, nombre_user) VALUES ($1, $2, $3, $4)', 
-            [usuario_id, tipo_documento, req.file.path, nombre_user]
-        );
-        res.json({ message: 'Ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-
-
-
-
-
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
