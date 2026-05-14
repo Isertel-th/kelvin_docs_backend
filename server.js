@@ -202,14 +202,23 @@ app.get('/api/admin/documentos/:id', verificarToken, permisoAdminDoc, async (req
 });
 
 app.delete('/api/admin/documentos/:id', verificarToken, async (req, res) => {
+    const { tipo } = req.query; // Pasaremos el tipo de documento para saber la tabla
     const esPasivo = req.query.pasivo === 'true';
-    const tabla = esPasivo ? 'documentos_pasivos' : 'documentos';
+    
+    let tabla = esPasivo ? 'documentos_pasivos' : 'documentos';
+    
+    // Si el tipo de documento indica que es médico, cambiamos la tabla
+    if (tipo && (tipo.toLowerCase().includes('médico') || tipo.toLowerCase().includes('medico') || tipo.toLowerCase().includes('reposo'))) {
+        tabla = 'docus_medicos';
+    }
+
     try {
         await pool.query(`DELETE FROM ${tabla} WHERE id = $1`, [req.params.id]);
         res.json({ message: 'Ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { 
+        res.status(500).json({ error: err.message }); 
+    }
 });
-
 app.get('/api/doctor/certificados-globales', verificarToken, permisoAdminDoc, async (req, res) => {
     try {
         const query = `
