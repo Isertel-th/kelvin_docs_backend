@@ -59,8 +59,11 @@ const verificarToken = (req, res, next) => {
 };
 
 const permisoAdminDoc = (req, res, next) => {
-    if (req.user.rol === 'admin' || req.user.rol === 'doc') next();
-    else res.status(403).json({ error: 'No tienes permisos' });
+    if (req.user.rol === 'admin' || req.user.rol === 'doc') {
+        next();
+    } else {
+        res.status(403).json({ error: 'Acceso denegado: Se requiere rol de Administrador o Doctor' });
+    }
 };
 
 // --- RUTAS ---
@@ -225,6 +228,12 @@ app.delete('/api/admin/documentos-empresa/:id', verificarToken, async (req, res)
         res.json({ message: 'Ok' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+
+
+
+
+
 
 
 
