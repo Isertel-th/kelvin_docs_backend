@@ -259,17 +259,20 @@ app.delete('/api/admin/documentos-empresa/:id', verificarToken, async (req, res)
 
 // --- NUEVAS RUTAS PARA APTITUD MÉDICA CON LOGS ---
 
+// server.js - Ruta corregida con UNION balanceado
 app.get('/api/doctor/aptitud/:id', verificarToken, permisoAdminDoc, async (req, res) => {
     const esPasivo = req.query.pasivo === 'true';
     const tablaPrincipal = esPasivo ? 'documentos_pasivos' : 'documentos';
     
     try {
-        // Usamos UNION ALL para traer lo de la tabla base Y lo de docus_medicos para ese usuario
+        // Seleccionamos columnas específicas para asegurar que coincidan en ambas tablas
         const query = `
-            SELECT * FROM ${tablaPrincipal} 
+            SELECT id, usuario_id, tipo_documento, url_cloudinary, nombre_user, created_at 
+            FROM ${tablaPrincipal} 
             WHERE usuario_id = $1 AND (tipo_documento ILIKE '%Ingreso%' OR tipo_documento ILIKE '%Periodo%' OR tipo_documento ILIKE '%Salida%')
             UNION ALL
-            SELECT * FROM docus_medicos 
+            SELECT id, usuario_id, tipo_documento, url_cloudinary, nombre_user, created_at 
+            FROM docus_medicos 
             WHERE usuario_id = $1
             ORDER BY created_at DESC
         `;
