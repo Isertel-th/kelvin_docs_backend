@@ -226,41 +226,5 @@ app.delete('/api/admin/documentos-empresa/:id', verificarToken, async (req, res)
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-
-
-
-
-
-
-
-// Obtener documentos de un usuario específico para el rol doctor
-app.get('/api/doctor/documentos-usuario/:id', verificarToken, async (req, res) => {
-    const { id } = req.params;
-    try {
-        // Esta consulta busca todos los documentos del usuario (contratos, certificados, etc.)
-        const query = `
-            SELECT id, tipo_documento, url_cloudinary, created_at 
-            FROM documentos_personales 
-            WHERE usuario_id = $1 
-            ORDER BY created_at DESC
-        `;
-        const result = await pool.query(query, [id]);
-        res.json(result.rows);
-    } catch (err) {
-        console.error("Error al obtener expediente:", err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-
-
-
-
-
-
-
-
-
-
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
