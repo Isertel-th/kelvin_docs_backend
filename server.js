@@ -226,5 +226,62 @@ app.delete('/api/admin/documentos-empresa/:id', verificarToken, async (req, res)
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+
+
+
+
+
+
+
+// --- ENDPOINTS ADICIONALES PARA DOCTOR (Añadir al final de server.js) ---
+
+// Subir documento a un empleado activo (desde panel doctor)
+app.post('/api/doctor/subir-activo/:id', verificarToken, permisoAdminDoc, upload.single('archivo'), async (req, res) => {
+    const { tipo_documento } = req.body;
+    const usuario_id = req.params.id;
+    try {
+        await pool.query('INSERT INTO documentos_usuarios (usuario_id, tipo_documento, url_cloudinary) VALUES ($1, $2, $3)', 
+            [usuario_id, tipo_documento, req.file.path]);
+        res.json({ message: 'Documento subido correctamente' });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Subir documento a un empleado pasivo (desde panel doctor)
+app.post('/api/doctor/subir-pasivo/:id', verificarToken, permisoAdminDoc, upload.single('archivo'), async (req, res) => {
+    const { tipo_documento } = req.body;
+    const usuario_id = req.params.id;
+    try {
+        await pool.query('INSERT INTO documentos_pasivos (usuario_id, tipo_documento, url_cloudinary) VALUES ($1, $2, $3)', 
+            [usuario_id, tipo_documento, req.file.path]);
+        res.json({ message: 'Documento subido correctamente' });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Listar documentos de un empleado activo
+app.get('/api/doctor/documentos-activo/:id', verificarToken, permisoAdminDoc, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM documentos_usuarios WHERE usuario_id = $1 ORDER BY created_at DESC', [req.params.id]);
+        res.json(result.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Listar documentos de un empleado pasivo
+app.get('/api/doctor/documentos-pasivo/:id', verificarToken, permisoAdminDoc, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM documentos_pasivos WHERE usuario_id = $1 ORDER BY created_at DESC', [req.params.id]);
+        res.json(result.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+
+
+
+
+
+
+
+
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
