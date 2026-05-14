@@ -189,10 +189,12 @@ app.get('/api/admin/documentos/:id', verificarToken, permisoAdminDoc, async (req
     const tablaPrincipal = esPasivo ? 'documentos_pasivos' : 'documentos';
     
     try {
+        // Esta consulta busca en la tabla normal Y en la de médicos al mismo tiempo
         const query = `
-            SELECT * FROM ${tablaPrincipal} WHERE usuario_id = $1
+            SELECT id, usuario_id, tipo_documento, url_cloudinary, created_at FROM ${tablaPrincipal} WHERE usuario_id = $1
             UNION ALL
-            SELECT * FROM docus_medicos WHERE usuario_id = $1
+            SELECT id, usuario_id, tipo_documento, url_cloudinary, created_at FROM docus_medicos WHERE usuario_id = $1
+            ORDER BY created_at DESC
         `;
         const result = await pool.query(query, [req.params.id]);
         res.json(result.rows);
