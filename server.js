@@ -11,22 +11,17 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// Configuración de la base de datos PostgreSQL
+// Configuración de la base de datos PostgreSQL (Soporta UTF-8 por defecto)
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false }
 });
 
-// Verificación de conexión inicial
 pool.query('SELECT NOW()', (err, res) => {
-    if (err) {
-        console.error('❌ Error de conexión a la DB:', err.stack);
-    } else {
-        console.log('✅ Conexión exitosa a la base de datos');
-    }
+    if (err) console.error('❌ Error DB:', err.stack);
+    else console.log('✅ DB Conectada');
 });
 
-// Configuración de Cloudinary
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
@@ -36,7 +31,7 @@ cloudinary.config({
 const storage = new CloudinaryStorage({
     cloudinary: cloudinary,
     params: async (req, file) => ({
-        folder: 'sistema_vehicular',
+        folder: 'isertel_gestion',
         format: file.mimetype === 'application/pdf' ? 'pdf' : 'jpg',
         public_id: `${Date.now()}_${file.originalname.split('.')[0]}`
     })
@@ -44,7 +39,6 @@ const storage = new CloudinaryStorage({
 
 const upload = multer({ storage });
 
-// Middleware para verificar JWT
 const verificarToken = (req, res, next) => {
     const token = req.header('Authorization');
     if (!token) return res.status(401).json({ error: 'Acceso denegado' });
@@ -55,16 +49,12 @@ const verificarToken = (req, res, next) => {
     } catch (err) { res.status(400).json({ error: 'Token no válido' }); }
 };
 
-// Middleware para permisos de ADMIN y DOC
 const permisoAdminDoc = (req, res, next) => {
-    if (req.user.rol === 'admin' || req.user.rol === 'doc') {
-        next();
-    } else {
-        res.status(403).json({ error: 'No tienes permisos para esta acción' });
-    }
+    if (req.user.rol === 'admin' || req.user.rol === 'doc') next();
+    else res.status(403).json({ error: 'No tienes permisos' });
 };
 
-// --- RUTAS DE AUTENTICACIÓN ---
+// --- RUTAS ---
 
 app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
@@ -79,9 +69,6 @@ app.post('/api/login', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- RUTAS DE GESTIÓN DE USUARIOS (ACTIVOS Y PASIVOS) ---
-
-// Obtener empleados activos (Solo rol 'user', excluye admin y doc)
 app.get('/api/admin/empleados', verificarToken, permisoAdminDoc, async (req, res) => {
     try {
         const result = await pool.query("SELECT * FROM usuarios WHERE rol = 'user' ORDER BY nombre_completo ASC");
@@ -89,7 +76,6 @@ app.get('/api/admin/empleados', verificarToken, permisoAdminDoc, async (req, res
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Obtener empleados pasivos
 app.get('/api/admin/pasivos', verificarToken, permisoAdminDoc, async (req, res) => {
     try {
         const result = await pool.query("SELECT * FROM pasivos ORDER BY nombre_completo ASC");
@@ -97,17 +83,27 @@ app.get('/api/admin/pasivos', verificarToken, permisoAdminDoc, async (req, res) 
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// CREACIÓN DE USUARIO CON VALIDACIÓN REFORZADA
 app.post('/api/admin/crear-usuario', verificarToken, upload.single('foto'), async (req, res) => {
     if (req.user.rol !== 'admin') return res.status(403).json({ error: 'Solo el admin crea usuarios' });
+    
     const { cedula, nombre_completo, fecha_ingreso, correo, celular, direccion } = req.body;
     const foto_url = req.file ? req.file.path : null;
+
+    // VALIDACIÓN LADO DEL SERVIDOR (BACKUP)
+    if(!cedula || cedula.length !== 10) return res.status(400).json({ error: 'Cédula debe tener 10 dígitos' });
+    if(!nombre_completo || !correo || !foto_url) return res.status(400).json({ error: 'Faltan campos obligatorios o la foto' });
+
     try {
         await pool.query(
             'INSERT INTO usuarios (username, cedula, nombre_completo, rol, fecha_ingreso, correo, celular, direccion, foto_url) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
             [cedula, cedula, nombre_completo, 'user', fecha_ingreso || null, correo, celular, direccion, foto_url]
         );
         res.json({ message: 'Ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { 
+        console.error(err);
+        res.status(500).json({ error: "Error al guardar en DB. Verifique que la cédula no esté duplicada." }); 
+    }
 });
 
 app.post('/api/admin/mover-a-pasivo/:id', verificarToken, async (req, res) => {
@@ -140,9 +136,6 @@ app.post('/api/admin/mover-a-pasivo/:id', verificarToken, async (req, res) => {
     } finally { client.release(); }
 });
 
-// --- RUTAS DE DOCUMENTOS ---
-
-// Subida de documentos (Permite Admin y Doc)
 app.post('/api/admin/subir-a-usuario', verificarToken, permisoAdminDoc, upload.single('archivo'), async (req, res) => {
     const { tipo_documento, usuario_id, nombre_user, es_pasivo } = req.body;
     const tabla = es_pasivo === 'true' ? 'documentos_pasivos' : 'documentos';
@@ -155,7 +148,6 @@ app.post('/api/admin/subir-a-usuario', verificarToken, permisoAdminDoc, upload.s
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Obtener documentos de un usuario específico
 app.get('/api/admin/documentos/:id', verificarToken, permisoAdminDoc, async (req, res) => {
     const esPasivo = req.query.pasivo === 'true';
     const tabla = esPasivo ? 'documentos_pasivos' : 'documentos';
@@ -165,7 +157,6 @@ app.get('/api/admin/documentos/:id', verificarToken, permisoAdminDoc, async (req
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Eliminar documentos
 app.delete('/api/admin/documentos/:id', verificarToken, async (req, res) => {
     const esPasivo = req.query.pasivo === 'true';
     const tabla = esPasivo ? 'documentos_pasivos' : 'documentos';
@@ -175,9 +166,6 @@ app.delete('/api/admin/documentos/:id', verificarToken, async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- RUTA REFLEJO PARA DOCTOR ---
-
-// Obtener todos los certificados médicos (Activos y Pasivos unidos)
 app.get('/api/doctor/certificados-globales', verificarToken, permisoAdminDoc, async (req, res) => {
     try {
         const query = `
@@ -197,51 +185,19 @@ app.get('/api/doctor/certificados-globales', verificarToken, permisoAdminDoc, as
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-
-// --- NUEVAS RUTAS: CERTIFICADOS DE APTITUD (DOCTOR) ---
-
-app.post('/api/doctor/subir-aptitud', verificarToken, permisoAdminDoc, upload.single('archivo'), async (req, res) => {
-    const { tipo_documento, usuario_id, es_pasivo } = req.body;
-    try {
-        await pool.query(
-            `INSERT INTO certificados_aptitud (usuario_id, es_pasivo, tipo_documento, url_cloudinary) VALUES ($1, $2, $3, $4)`,
-            [usuario_id, es_pasivo === 'true', tipo_documento, req.file.path]
-        );
-        res.json({ message: 'Ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.get('/api/doctor/aptitud/:id', verificarToken, permisoAdminDoc, async (req, res) => {
-    const esPasivo = req.query.pasivo === 'true';
-    try {
-        const result = await pool.query(`SELECT * FROM certificados_aptitud WHERE usuario_id = $1 AND es_pasivo = $2 ORDER BY created_at DESC`, [req.params.id, esPasivo]);
-        res.json(result.rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.delete('/api/doctor/aptitud/:id', verificarToken, permisoAdminDoc, async (req, res) => {
-    try {
-        await pool.query(`DELETE FROM certificados_aptitud WHERE id = $1`, [req.params.id]);
-        res.json({ message: 'Ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-
-// --- GESTIÓN EMPRESARIAL ---
-
-app.get('/api/admin/documentos-empresa', verificarToken, async (req, res) => {
-    try {
-        const result = await pool.query('SELECT * FROM documentos_empresa ORDER BY id DESC');
-        res.json(result.rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
 app.post('/api/subir-empresa', verificarToken, upload.single('archivo'), async (req, res) => {
     const { tipo_documento } = req.body;
     try {
         await pool.query('INSERT INTO documentos_empresa (tipo_documento, url_cloudinary) VALUES ($1, $2)', 
             [tipo_documento, req.file.path]);
         res.json({ message: 'Ok' });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/admin/documentos-empresa', verificarToken, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM documentos_empresa ORDER BY id DESC');
+        res.json(result.rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
