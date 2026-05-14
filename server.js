@@ -156,32 +156,55 @@ app.post('/api/admin/mover-a-pasivo/:id', verificarToken, async (req, res) => {
 
 app.post('/api/admin/subir-a-usuario', verificarToken, permisoAdminDoc, upload.single('archivo'), async (req, res) => {
     const { tipo_documento, usuario_id, nombre_user, es_pasivo } = req.body;
-    const tabla = es_pasivo === 'true' ? 'documentos_pasivos' : 'documentos';
+    
+    // Lógica para determinar la tabla de destino
+    let tabla;
+    if (tipo_documento.includes("Certificado médico") || tipo_documento.includes("Reposo médico")) {
+        tabla = 'docus_medicos';
+    } else {
+        tabla = es_pasivo === 'true' ? 'documentos_pasivos' : 'documentos';
+    }
+
     try {
         await pool.query(
             `INSERT INTO ${tabla} (usuario_id, tipo_documento, url_cloudinary, nombre_user) VALUES ($1, $2, $3, $4)`, 
             [usuario_id, tipo_documento, req.file.path, nombre_user]
         );
         res.json({ message: 'Ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { 
+        res.status(500).json({ error: err.message }); 
+    }
 });
 
+// En server.js busca esta ruta y reemplázala:
 app.get('/api/admin/documentos/:id', verificarToken, permisoAdminDoc, async (req, res) => {
     const esPasivo = req.query.pasivo === 'true';
-    const tabla = esPasivo ? 'documentos_pasivos' : 'documentos';
+    const tablaPrincipal = esPasivo ? 'documentos_pasivos' : 'documentos';
+    
     try {
-        const result = await pool.query(`SELECT * FROM ${tabla} WHERE usuario_id = $1`, [req.params.id]);
+        const query = `
+            SELECT * FROM ${tablaPrincipal} WHERE usuario_id = $1
+            UNION ALL
+            SELECT * FROM docus_medicos WHERE usuario_id = $1
+        `;
+        const result = await pool.query(query, [req.params.id]);
         res.json(result.rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { 
+        res.status(500).json({ error: err.message }); 
+    }
 });
 
 app.delete('/api/admin/documentos/:id', verificarToken, async (req, res) => {
-    const esPasivo = req.query.pasivo === 'true';
-    const tabla = esPasivo ? 'documentos_pasivos' : 'documentos';
     try {
-        await pool.query(`DELETE FROM ${tabla} WHERE id = $1`, [req.params.id]);
+        // Intenta borrar en las tres tablas
+        await pool.query(`DELETE FROM documentos WHERE id = $1`, [req.params.id]);
+        await pool.query(`DELETE FROM documentos_pasivos WHERE id = $1`, [req.params.id]);
+        await pool.query(`DELETE FROM docus_medicos WHERE id = $1`, [req.params.id]);
+        
         res.json({ message: 'Ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { 
+        res.status(500).json({ error: err.message }); 
+    }
 });
 
 app.get('/api/doctor/certificados-globales', verificarToken, permisoAdminDoc, async (req, res) => {
