@@ -265,21 +265,17 @@ app.get('/api/doctor/aptitud/:id', verificarToken, permisoAdminDoc, async (req, 
     const tablaPrincipal = esPasivo ? 'documentos_pasivos' : 'documentos';
     
     try {
-        // Seleccionamos columnas específicas para asegurar que coincidan en ambas tablas
         const query = `
-            SELECT id, usuario_id, tipo_documento, url_cloudinary, nombre_user, created_at 
-            FROM ${tablaPrincipal} 
-            WHERE usuario_id = $1 AND (tipo_documento ILIKE '%Ingreso%' OR tipo_documento ILIKE '%Periodo%' OR tipo_documento ILIKE '%Salida%')
+            SELECT id, usuario_id, tipo_documento, url_cloudinary, nombre_user, created_at FROM ${tablaPrincipal} WHERE usuario_id = $1
             UNION ALL
-            SELECT id, usuario_id, tipo_documento, url_cloudinary, nombre_user, created_at 
-            FROM docus_medicos 
-            WHERE usuario_id = $1
+            SELECT id, usuario_id, tipo_documento, url_cloudinary, nombre_user, created_at FROM docus_medicos WHERE usuario_id = $1
+            UNION ALL
+            SELECT id, usuario_id, tipo_documento, url_cloudinary, nombre_user, created_at FROM certificados_aptitud WHERE usuario_id = $1
             ORDER BY created_at DESC
         `;
         const result = await pool.query(query, [req.params.id]);
         res.json(result.rows);
     } catch (err) {
-        console.error("❌ Error en GET /aptitud:", err.message);
         res.status(500).json({ error: err.message });
     }
 });
@@ -288,33 +284,28 @@ app.get('/api/doctor/aptitud/:id', verificarToken, permisoAdminDoc, async (req, 
 app.post('/api/doctor/subir-aptitud', verificarToken, permisoAdminDoc, upload.single('archivo'), async (req, res) => {
     const { tipo_documento, usuario_id, es_pasivo } = req.body;
     
-    // --- NUEVA LÓGICA DE DIRECCIONAMIENTO DE TABLA ---
     let tabla;
     
-    // Si el nombre del documento contiene "Certificado médico" o "Reposo", va a docus_medicos
+    // 1. Si es médico o reposo, va a docus_medicos
     if (tipo_documento.includes("Certificado médico") || tipo_documento.includes("Reposo médico")) {
         tabla = 'docus_medicos';
-    } else {
-        // Si no, sigue la lógica normal de Activo (documentos) o Pasivo (documentos_pasivos)
+    } 
+    // 2. Si es Aptitud o Ficha, va a la NUEVA tabla certificados_aptitud
+    else if (tipo_documento.includes("Aptitud Médica") || tipo_documento.includes("Ficha Médica")) {
+        tabla = 'certificados_aptitud';
+    }
+    // 3. Respaldo para otros casos (documentos generales)
+    else {
         tabla = es_pasivo === 'true' ? 'documentos_pasivos' : 'documentos';
     }
     
-    console.log(`[SUBIDA DOCTOR] Destino: ${tabla} - Tipo: ${tipo_documento}`);
-
-    if (!req.file) {
-        return res.status(400).json({ error: "No se recibió ningún archivo en el servidor." });
-    }
-
     try {
         await pool.query(
             `INSERT INTO ${tabla} (usuario_id, tipo_documento, url_cloudinary, nombre_user) VALUES ($1, $2, $3, $4)`, 
-            // Añadimos nombre_user si lo necesitas, o lo dejamos vacío si la tabla docus_medicos no lo requiere
-            [usuario_id, tipo_documento, req.file.path, req.body.nombre_user || 'Médico']
+            [usuario_id, tipo_documento, req.file.path, req.body.nombre_user || 'Servicio Médico']
         );
-        console.log("✅ Registro guardado con éxito en:", tabla);
         res.json({ message: 'Ok' });
     } catch (err) {
-        console.error("❌ Error al insertar en DB:", err.message);
         res.status(500).json({ error: err.message });
     }
 });
@@ -324,7 +315,8 @@ app.delete('/api/doctor/aptitud/:id', verificarToken, permisoAdminDoc, async (re
     try {
         await pool.query("DELETE FROM documentos WHERE id = $1", [req.params.id]);
         await pool.query("DELETE FROM documentos_pasivos WHERE id = $1", [req.params.id]);
-        await pool.query("DELETE FROM docus_medicos WHERE id = $1", [req.params.id]); // <--- Agregada
+        await pool.query("DELETE FROM docus_medicos WHERE id = $1", [req.params.id]);
+        await pool.query("DELETE FROM certificados_aptitud WHERE id = $1", [req.params.id]); // <--- Nueva línea
         res.json({ message: 'Ok' });
     } catch (err) {
         res.status(500).json({ error: err.message });
