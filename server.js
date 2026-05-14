@@ -226,50 +226,5 @@ app.delete('/api/admin/documentos-empresa/:id', verificarToken, async (req, res)
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-
-
-
-
-
-// Endpoint para obtener documentos de aptitud por usuario (usado en el expediente)
-app.get('/api/doctor/aptitud/:usuarioId', verificarToken, async (req, res) => {
-    try {
-        const { usuarioId } = req.params;
-        const result = await pool.query(
-            'SELECT * FROM certificados_aptitud WHERE usuario_id = $1 ORDER BY created_at DESC',
-            [usuarioId]
-        );
-        res.json(result.rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// Endpoint para obtener certificados médicos/reposos por usuario
-app.get('/api/doctor/medicos/:usuarioId', verificarToken, async (req, res) => {
-    try {
-        const { usuarioId } = req.params;
-        const query = `
-            SELECT * FROM documentos_personales 
-            WHERE usuario_id = $1 AND (tipo_documento ILIKE '%Certificado médico%' OR tipo_documento ILIKE '%Reposo%')
-            ORDER BY created_at DESC
-        `;
-        const result = await pool.query(query, [usuarioId]);
-        res.json(result.rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
