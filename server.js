@@ -156,71 +156,34 @@ app.post('/api/admin/mover-a-pasivo/:id', verificarToken, async (req, res) => {
 
 app.post('/api/admin/subir-a-usuario', verificarToken, permisoAdminDoc, upload.single('archivo'), async (req, res) => {
     const { tipo_documento, usuario_id, nombre_user, es_pasivo } = req.body;
-    
+    const tabla = es_pasivo === 'true' ? 'documentos_pasivos' : 'documentos';
     try {
-        let tabla;
-        // Lógica de redirección a tabla docus_medicos
-        const esMedico = tipo_documento.toLowerCase().includes('médico') || 
-                         tipo_documento.toLowerCase().includes('medico') || 
-                         tipo_documento.toLowerCase().includes('reposo');
-
-        if (esMedico) {
-            tabla = 'docus_medicos';
-        } else {
-            tabla = (es_pasivo === 'true') ? 'documentos_pasivos' : 'documentos';
-        }
-
         await pool.query(
             `INSERT INTO ${tabla} (usuario_id, tipo_documento, url_cloudinary, nombre_user) VALUES ($1, $2, $3, $4)`, 
             [usuario_id, tipo_documento, req.file.path, nombre_user]
         );
-        
-        console.log(`✅ Archivo guardado en la tabla: ${tabla}`);
         res.json({ message: 'Ok' });
-    } catch (err) { 
-        console.error(err);
-        res.status(500).json({ error: err.message }); 
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Actualiza esta ruta en server.js
 app.get('/api/admin/documentos/:id', verificarToken, permisoAdminDoc, async (req, res) => {
     const esPasivo = req.query.pasivo === 'true';
-    const tablaPrincipal = esPasivo ? 'documentos_pasivos' : 'documentos';
-    
+    const tabla = esPasivo ? 'documentos_pasivos' : 'documentos';
     try {
-        // Esta consulta busca en la tabla normal Y en la de médicos al mismo tiempo
-        const query = `
-            SELECT id, usuario_id, tipo_documento, url_cloudinary, created_at FROM ${tablaPrincipal} WHERE usuario_id = $1
-            UNION ALL
-            SELECT id, usuario_id, tipo_documento, url_cloudinary, created_at FROM docus_medicos WHERE usuario_id = $1
-            ORDER BY created_at DESC
-        `;
-        const result = await pool.query(query, [req.params.id]);
+        const result = await pool.query(`SELECT * FROM ${tabla} WHERE usuario_id = $1`, [req.params.id]);
         res.json(result.rows);
-    } catch (err) { 
-        res.status(500).json({ error: err.message }); 
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.delete('/api/admin/documentos/:id', verificarToken, async (req, res) => {
-    const { tipo } = req.query; // Pasaremos el tipo de documento para saber la tabla
     const esPasivo = req.query.pasivo === 'true';
-    
-    let tabla = esPasivo ? 'documentos_pasivos' : 'documentos';
-    
-    // Si el tipo de documento indica que es médico, cambiamos la tabla
-    if (tipo && (tipo.toLowerCase().includes('médico') || tipo.toLowerCase().includes('medico') || tipo.toLowerCase().includes('reposo'))) {
-        tabla = 'docus_medicos';
-    }
-
+    const tabla = esPasivo ? 'documentos_pasivos' : 'documentos';
     try {
         await pool.query(`DELETE FROM ${tabla} WHERE id = $1`, [req.params.id]);
         res.json({ message: 'Ok' });
-    } catch (err) { 
-        res.status(500).json({ error: err.message }); 
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
 app.get('/api/doctor/certificados-globales', verificarToken, permisoAdminDoc, async (req, res) => {
     try {
         const query = `
