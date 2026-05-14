@@ -318,11 +318,11 @@ app.post('/api/doctor/subir-aptitud', verificarToken, permisoAdminDoc, upload.si
 
 // Ruta para eliminar aptitud (usando la tabla correcta según lógica de doctor)
 app.delete('/api/doctor/aptitud/:id', verificarToken, permisoAdminDoc, async (req, res) => {
-    // Nota: Aquí podrías necesitar lógica para saber si es pasivo o activo antes de borrar
-    // Por ahora intentaremos borrar de ambas o requerir un query param
     try {
-        await pool.query("DELETE FROM documentos WHERE id = $1", [req.params.id]);
-        await pool.query("DELETE FROM documentos_pasivos WHERE id = $1", [req.params.id]);
+        // Intentamos borrar de ambas tablas para asegurar la eliminación
+        const res1 = await pool.query("DELETE FROM documentos WHERE id = $1", [req.params.id]);
+        const res2 = await pool.query("DELETE FROM documentos_pasivos WHERE id = $1", [req.params.id]);
+        
         res.json({ message: 'Ok' });
     } catch (err) {
         res.status(500).json({ error: err.message });
