@@ -177,19 +177,23 @@ app.post('/api/admin/subir-a-usuario', verificarToken, permisoAdminDoc, upload.s
 });
 
 // En server.js busca esta ruta y reemplázala:
+// server.js - Asegúrate de que la consulta sea robusta
 app.get('/api/admin/documentos/:id', verificarToken, permisoAdminDoc, async (req, res) => {
     const esPasivo = req.query.pasivo === 'true';
     const tablaPrincipal = esPasivo ? 'documentos_pasivos' : 'documentos';
     
     try {
+        // Seleccionamos columnas explícitamente para asegurar que el UNION funcione siempre
         const query = `
-            SELECT * FROM ${tablaPrincipal} WHERE usuario_id = $1
+            SELECT id, usuario_id, tipo_documento, url_cloudinary, nombre_user, created_at FROM ${tablaPrincipal} WHERE usuario_id = $1
             UNION ALL
-            SELECT * FROM docus_medicos WHERE usuario_id = $1
+            SELECT id, usuario_id, tipo_documento, url_cloudinary, nombre_user, created_at FROM docus_medicos WHERE usuario_id = $1
+            ORDER BY created_at DESC
         `;
         const result = await pool.query(query, [req.params.id]);
         res.json(result.rows);
     } catch (err) { 
+        console.error("Error al obtener documentos:", err.message);
         res.status(500).json({ error: err.message }); 
     }
 });
