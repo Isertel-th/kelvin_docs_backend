@@ -58,9 +58,14 @@ const verificarToken = (req, res, next) => {
     } catch (err) { res.status(400).json({ error: 'Token no válido' }); }
 };
 
+// server.js
 const permisoAdminDoc = (req, res, next) => {
-    if (req.user.rol === 'admin' || req.user.rol === 'doc') next();
-    else res.status(403).json({ error: 'No tienes permisos' });
+    // Añadimos 'kelvin' a la lista de roles autorizados
+    if (req.user.rol === 'admin' || req.user.rol === 'doc' || req.user.rol === 'kelvin') {
+        next();
+    } else {
+        res.status(403).json({ error: 'No tienes permisos' });
+    }
 };
 
 // --- RUTAS ---
