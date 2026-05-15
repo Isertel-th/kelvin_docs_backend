@@ -63,6 +63,12 @@ const permisoAdminDoc = (req, res, next) => {
     else res.status(403).json({ error: 'No tienes permisos' });
 };
 
+// 1. Modificar permiso para incluir el rol 'kelvin'
+const permisoAdminDocKelvin = (req, res, next) => {
+    if (req.user.rol === 'admin' || req.user.rol === 'doc' || req.user.rol === 'kelvin') next();
+    else res.status(403).json({ error: 'No tienes permisos' });
+};
+
 // --- RUTAS ---
 
 app.post('/api/login', async (req, res) => {
@@ -333,6 +339,51 @@ app.delete('/api/doctor/aptitud/:id', verificarToken, permisoAdminDoc, async (re
         await pool.query("DELETE FROM docus_medicos WHERE id = $1", [req.params.id]);
         await pool.query("DELETE FROM certificados_aptitud WHERE id = $1", [req.params.id]); // <--- Nueva línea
         res.json({ message: 'Ok' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 2. Nueva ruta de subida adaptada para Kelvin
+app.post('/api/kelvin/subir-certificados', verificarToken, permisoAdminDocKelvin, upload.single('archivo'), async (req, res) => {
+    const { tipo_documento, usuario_id, es_pasivo } = req.body;
+    let tabla;
+    
+    if (tipo_documento.includes("Certificado de competencia")) {
+        tabla = 'certifi_competencia';
+    } else if (tipo_documento.includes("Acta de epp")) {
+        tabla = 'acta_epps';
+    } else {
+        tabla = es_pasivo === 'true' ? 'documentos_pasivos' : 'documentos';
+    }
+    
+    try {
+        await pool.query(
+            `INSERT INTO ${tabla} (usuario_id, tipo_documento, url_cloudinary, nombre_user) VALUES ($1, $2, $3, $4)`, 
+            [usuario_id, tipo_documento, req.file.path, req.body.nombre_user || 'Gestión Kelvin']
+        );
+        res.json({ message: 'Ok' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 3. Nueva ruta de consulta adaptada para Kelvin (con UNION de sus tablas)
+app.get('/api/kelvin/documentos/:id', verificarToken, permisoAdminDocKelvin, async (req, res) => {
+    const esPasivo = req.query.pasivo === 'true';
+    const tablaPrincipal = esPasivo ? 'documentos_pasivos' : 'documentos';
+    
+    try {
+        const query = `
+            SELECT id, usuario_id, tipo_documento, url_cloudinary, nombre_user, created_at FROM ${tablaPrincipal} WHERE usuario_id = $1
+            UNION ALL
+            SELECT id, usuario_id, tipo_documento, url_cloudinary, nombre_user, created_at FROM certifi_competencia WHERE usuario_id = $1
+            UNION ALL
+            SELECT id, usuario_id, tipo_documento, url_cloudinary, nombre_user, created_at FROM acta_epps WHERE usuario_id = $1
+            ORDER BY created_at DESC
+        `;
+        const result = await pool.query(query, [req.params.id]);
+        res.json(result.rows);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
