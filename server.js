@@ -344,30 +344,61 @@ app.delete('/api/doctor/aptitud/:id', verificarToken, permisoAdminDoc, async (re
 });
 
 
-// 2. Nueva ruta de subida adaptada para Kelvin
+// ... (Tus imports y config de Cloudinary se mantienen igual)
+
+// --- RUTAS CON LOGS ---
+
+// 2. Nueva ruta de subida adaptada para Kelvin (CON LOGS)
 app.post('/api/kelvin/subir-certificados', verificarToken, permisoGeneralPersonal, upload.single('archivo'), async (req, res) => {
     const { tipo_documento, usuario_id, es_pasivo } = req.body;
+    
+    console.log("--- INTENTO DE SUBIDA (KELVIN) ---");
+    console.log("Tipo Doc:", tipo_documento);
+    console.log("ID Usuario:", usuario_id);
+    console.log("Es Pasivo:", es_pasivo);
+
     let tabla;
-    if (tipo_documento.includes("Certificado de competencia")) {
+    // Normalizamos a minúsculas para evitar errores de escritura
+    const tipoLower = tipo_documento.toLowerCase();
+
+    if (tipoLower.includes("competencia")) {
         tabla = 'certifi_competencia';
-    } else if (tipo_documento.includes("Acta de epp")) {
+    } else if (tipoLower.includes("acta de epp") || tipoLower.includes("epp")) {
         tabla = 'acta_epps';
     } else {
         tabla = es_pasivo === 'true' ? 'documentos_pasivos' : 'documentos';
     }
+
+    console.log("Tabla seleccionada para guardar:", tabla);
+
     try {
+        if (!req.file) {
+            console.error("❌ No se recibió archivo de Cloudinary");
+            return res.status(400).json({ error: "No hay archivo" });
+        }
+
         await pool.query(
             `INSERT INTO ${tabla} (usuario_id, tipo_documento, url_cloudinary, nombre_user) VALUES ($1, $2, $3, $4)`, 
             [usuario_id, tipo_documento, req.file.path, 'Gestión Kelvin']
         );
+        console.log("✅ Guardado exitoso en DB");
         res.json({ message: 'Ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { 
+        console.error("❌ ERROR EN SUBIDA:", err.message);
+        res.status(500).json({ error: err.message }); 
+    }
 });
 
-// 3. Nueva ruta de consulta adaptada para Kelvin (con UNION de sus tablas)
+// 3. Nueva ruta de consulta adaptada para Kelvin (CON LOGS)
 app.get('/api/kelvin/documentos/:id', verificarToken, permisoGeneralPersonal, async (req, res) => {
     const esPasivo = req.query.pasivo === 'true';
+    const { id } = req.params;
+    
+    console.log(`--- CONSULTA DE DOCUMENTOS (KELVIN) ---`);
+    console.log(`ID buscado: ${id}, Es Pasivo: ${esPasivo}`);
+
     const tablaPrincipal = esPasivo ? 'documentos_pasivos' : 'documentos';
+    
     try {
         const query = `
             SELECT id, usuario_id, tipo_documento, url_cloudinary, nombre_user, created_at FROM ${tablaPrincipal} WHERE usuario_id = $1
@@ -377,9 +408,14 @@ app.get('/api/kelvin/documentos/:id', verificarToken, permisoGeneralPersonal, as
             SELECT id, usuario_id, tipo_documento, url_cloudinary, nombre_user, created_at FROM acta_epps WHERE usuario_id = $1
             ORDER BY created_at DESC
         `;
-        const result = await pool.query(query, [req.params.id]);
+        
+        const result = await pool.query(query, [id]);
+        console.log(`✅ Documentos encontrados: ${result.rows.length}`);
         res.json(result.rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { 
+        console.error("❌ ERROR EN CONSULTA:", err.message);
+        res.status(500).json({ error: err.message }); 
+    }
 });
 
 // Ruta de Empleados Activos
