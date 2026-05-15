@@ -220,9 +220,10 @@ app.get('/api/admin/documentos/:id', verificarToken, permisoAdminDoc, async (req
 
 app.delete('/api/admin/documentos/:id', verificarToken, async (req, res) => {
     try {
-        // Intenta borrar en las tres tablas
+        // Intenta borrar en todas las tablas posibles
         await pool.query(`DELETE FROM documentos WHERE id = $1`, [req.params.id]);
-        await pool.query(`DELETE FROM documentos_pasivos WHERE id = $1`, [req.params.id]);
+        await pool.query(`DELETE FROM certifi_competencia WHERE id = $1`, [req.params.id]);
+        await pool.query(`DELETE FROM acta_epps WHERE id = $1`, [req.params.id]);
         await pool.query(`DELETE FROM docus_medicos WHERE id = $1`, [req.params.id]);
         
         res.json({ message: 'Ok' });
@@ -342,6 +343,51 @@ app.delete('/api/doctor/aptitud/:id', verificarToken, permisoAdminDoc, async (re
         res.status(500).json({ error: err.message });
     }
 });
+
+
+
+// Ruta para que Kelvin suba archivos a las tablas específicas
+app.post('/api/kelvin/subir-certificados', verificarToken, permisoAdminDoc, upload.single('archivo'), async (req, res) => {
+    const { tipo_documento, usuario_id } = req.body;
+    let tabla = '';
+
+    // Lógica para decidir la tabla según el nombre del archivo o tipo
+    if (tipo_documento.toLowerCase().includes('competencia') || tipo_documento.toLowerCase().includes('técnico')) {
+        tabla = 'certifi_competencia';
+    } else if (tipo_documento.toLowerCase().includes('epp')) {
+        tabla = 'acta_epps';
+    } else {
+        return res.status(400).json({ error: "Tipo de documento no reconocido para este panel" });
+    }
+
+    try {
+        await pool.query(
+            `INSERT INTO ${tabla} (usuario_id, tipo_documento, url_cloudinary, nombre_user) VALUES ($1, $2, $3, $4)`, 
+            [usuario_id, tipo_documento, req.file.path, 'Gestor Kelvin']
+        );
+        res.json({ message: 'Ok' });
+    } catch (err) {
+        console.error("Error en subida Kelvin:", err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Ruta para que Kelvin pueda VER los documentos de esas tablas
+app.get('/api/kelvin/documentos/:id', verificarToken, permisoAdminDoc, async (req, res) => {
+    try {
+        const query = `
+            SELECT id, usuario_id, tipo_documento, url_cloudinary, nombre_user, created_at FROM certifi_competencia WHERE usuario_id = $1
+            UNION ALL
+            SELECT id, usuario_id, tipo_documento, url_cloudinary, nombre_user, created_at FROM acta_epps WHERE usuario_id = $1
+            ORDER BY created_at DESC
+        `;
+        const result = await pool.query(query, [req.params.id]);
+        res.json(result.rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 
 
 const PORT = process.env.PORT || 3000;
