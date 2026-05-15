@@ -123,25 +123,49 @@ app.post('/api/admin/crear-usuario', verificarToken, upload.single('foto'), asyn
     }
 });
 
-app.post('/api/admin/crear-usuario', verificarToken, upload.single('foto'), async (req, res) => {
-    if (req.user.rol !== 'admin') return res.status(403).json({ error: 'Solo el admin crea usuarios' });
+app.post('/api/admin/mover-a-pasivo/:id', verificarToken, async (req, res) => {
+    if (req.user.rol !== 'admin') return res.status(403).json({ error: 'Acción restringida' });
     
-    const { cedula, nombre_completo, fecha_ingreso, correo, celular, direccion } = req.body;
-    const foto_url = req.file ? req.file.path : null;
-
-    // Se mantienen tus validaciones originales
-    if(!cedula || cedula.length !== 10) return res.status(400).json({ error: 'Cédula debe tener 10 dígitos' });
-    if(!correo || !esCorreoValido(correo)) return res.status(400).json({ error: 'Correo inválido o dominio no permitido' });
-    if(!nombre_completo || !foto_url) return res.status(400).json({ error: 'Faltan campos obligatorios o la foto' });
-
+    const client = await pool.connect();
     try {
-        await pool.query(
-            'INSERT INTO nomina (username, cedula, nombre_completo, rol, fecha_ingreso, correo, celular, direccion, foto_url) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
-            [cedula, cedula, nombre_completo, 'user', fecha_ingreso || null, correo, celular, direccion, foto_url]
+        await client.query('BEGIN');
+
+        // 1. Obtener los datos actuales desde la tabla 'nomina'
+        const userRes = await client.query('SELECT * FROM nomina WHERE id = $1', [req.params.id]);
+        if (userRes.rows.length === 0) throw new Error("Empleado no encontrado en nómina");
+        const u = userRes.rows[0];
+        
+        // 2. Insertar en la tabla 'pasivos' y obtener el nuevo ID generado
+        const insertPasivo = await client.query(
+            `INSERT INTO pasivos (username, cedula, nombre_completo, rol, fecha_ingreso, correo, celular, direccion, foto_url) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
+            [u.username, u.cedula, u.nombre_completo, u.rol, u.fecha_ingreso, u.correo, u.celular, u.direccion, u.foto_url]
         );
+        const nuevoId = insertPasivo.rows[0].id;
+
+        // 3. Mover los documentos generales a la tabla de pasivos
+        await client.query(
+            `INSERT INTO documentos_pasivos (usuario_id, tipo_documento, url_cloudinary, nombre_user) 
+             SELECT $1, tipo_documento, url_cloudinary, nombre_user FROM documentos WHERE usuario_id = $2`,
+            [nuevoId, u.id]
+        );
+
+        // 4. Actualizar carpetas médicas y de aptitud para que apunten al nuevo ID del pasivo
+        await client.query('UPDATE docus_medicos SET usuario_id = $1 WHERE usuario_id = $2', [nuevoId, u.id]);
+        await client.query('UPDATE certificados_aptitud SET usuario_id = $1 WHERE usuario_id = $2', [nuevoId, u.id]);
+
+        // 5. Eliminar los registros de las tablas de activos
+        await client.query('DELETE FROM documentos WHERE usuario_id = $1', [u.id]);
+        await client.query('DELETE FROM nomina WHERE id = $1', [u.id]);
+
+        await client.query('COMMIT');
         res.json({ message: 'Ok' });
-    } catch (err) { 
-        res.status(500).json({ error: "Error al guardar en Nomina. Verifique duplicados." }); 
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error(err);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
     }
 });
 
