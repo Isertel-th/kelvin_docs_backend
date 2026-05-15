@@ -58,16 +58,18 @@ const verificarToken = (req, res, next) => {
     } catch (err) { res.status(400).json({ error: 'Token no válido' }); }
 };
 
+// Úsalo para lo que SOLO ven el Admin y el Médico (ej. Certificados médicos)
 const permisoAdminDoc = (req, res, next) => {
-    if (req.user.rol === 'admin' || req.user.rol === 'doc') next();
-    else res.status(403).json({ error: 'No tienes permisos' });
+    if (req.user && (req.user.rol === 'admin' || req.user.rol === 'doc')) next();
+    else res.status(403).json({ error: 'No tienes permisos: Solo Admin y Doc' });
 };
 
-// 1. Modificar permiso para incluir el rol 'kelvin'
-const permisoAdminDocKelvin = (req, res, next) => {
-    if (req.user.rol === 'admin' || req.user.rol === 'doc' || req.user.rol === 'kelvin') next();
-    else res.status(403).json({ error: 'No tienes permisos' });
+const permisoGeneralPersonal = (req, res, next) => {
+    const rolesAutorizados = ['admin', 'doc', 'kelvin'];
+    if (req.user && rolesAutorizados.includes(req.user.rol)) next();
+    else res.status(403).json({ error: 'Acceso denegado: Se requiere rol Admin, Doc o Kelvin' });
 };
+
 
 // --- RUTAS ---
 
@@ -275,9 +277,6 @@ app.delete('/api/admin/documentos-empresa/:id', verificarToken, async (req, res)
 });
 
 
-
-
-
 // --- NUEVAS RUTAS PARA APTITUD MÉDICA CON LOGS ---
 
 // server.js - Ruta corregida con UNION balanceado
@@ -344,11 +343,11 @@ app.delete('/api/doctor/aptitud/:id', verificarToken, permisoAdminDoc, async (re
     }
 });
 
+
 // 2. Nueva ruta de subida adaptada para Kelvin
-app.post('/api/kelvin/subir-certificados', verificarToken, permisoAdminDocKelvin, upload.single('archivo'), async (req, res) => {
+app.post('/api/kelvin/subir-certificados', verificarToken, permisoGeneralPersonal, upload.single('archivo'), async (req, res) => {
     const { tipo_documento, usuario_id, es_pasivo } = req.body;
     let tabla;
-    
     if (tipo_documento.includes("Certificado de competencia")) {
         tabla = 'certifi_competencia';
     } else if (tipo_documento.includes("Acta de epp")) {
@@ -356,23 +355,19 @@ app.post('/api/kelvin/subir-certificados', verificarToken, permisoAdminDocKelvin
     } else {
         tabla = es_pasivo === 'true' ? 'documentos_pasivos' : 'documentos';
     }
-    
     try {
         await pool.query(
             `INSERT INTO ${tabla} (usuario_id, tipo_documento, url_cloudinary, nombre_user) VALUES ($1, $2, $3, $4)`, 
-            [usuario_id, tipo_documento, req.file.path, req.body.nombre_user || 'Gestión Kelvin']
+            [usuario_id, tipo_documento, req.file.path, 'Gestión Kelvin']
         );
         res.json({ message: 'Ok' });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // 3. Nueva ruta de consulta adaptada para Kelvin (con UNION de sus tablas)
-app.get('/api/kelvin/documentos/:id', verificarToken, permisoAdminDocKelvin, async (req, res) => {
+app.get('/api/kelvin/documentos/:id', verificarToken, permisoGeneralPersonal, async (req, res) => {
     const esPasivo = req.query.pasivo === 'true';
     const tablaPrincipal = esPasivo ? 'documentos_pasivos' : 'documentos';
-    
     try {
         const query = `
             SELECT id, usuario_id, tipo_documento, url_cloudinary, nombre_user, created_at FROM ${tablaPrincipal} WHERE usuario_id = $1
@@ -384,9 +379,24 @@ app.get('/api/kelvin/documentos/:id', verificarToken, permisoAdminDocKelvin, asy
         `;
         const result = await pool.query(query, [req.params.id]);
         res.json(result.rows);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Ruta de Empleados Activos
+// Estas dos rutas reemplazan a todas las versiones repetidas que tenías de empleados/pasivos
+app.get('/api/admin/empleados', verificarToken, permisoGeneralPersonal, async (req, res) => {
+    try {
+        const result = await pool.query("SELECT * FROM nomina ORDER BY nombre_completo ASC");
+        res.json(result.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Ruta de Empleados Pasivos
+app.get('/api/admin/pasivos', verificarToken, permisoGeneralPersonal, async (req, res) => {
+    try {
+        const result = await pool.query("SELECT * FROM pasivos ORDER BY nombre_completo ASC");
+        res.json(result.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 
