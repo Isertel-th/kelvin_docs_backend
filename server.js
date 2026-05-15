@@ -201,21 +201,11 @@ app.post('/api/admin/subir-a-usuario', verificarToken, permisoAdminDoc, upload.s
 app.get('/api/admin/documentos/:id', verificarToken, permisoAdminDoc, async (req, res) => {
     const esPasivo = req.query.pasivo === 'true';
     const tablaPrincipal = esPasivo ? 'documentos_pasivos' : 'documentos';
-    
     try {
-        // Seleccionamos columnas explícitamente para asegurar que el UNION funcione siempre
-        const query = `
-            SELECT id, usuario_id, tipo_documento, url_cloudinary, nombre_user, created_at FROM ${tablaPrincipal} WHERE usuario_id = $1
-            UNION ALL
-            SELECT id, usuario_id, tipo_documento, url_cloudinary, nombre_user, created_at FROM docus_medicos WHERE usuario_id = $1
-            ORDER BY created_at DESC
-        `;
+        const query = `SELECT id, usuario_id, tipo_documento, url_cloudinary, nombre_user, created_at FROM ${tablaPrincipal} WHERE usuario_id = $1 ORDER BY created_at DESC`;
         const result = await pool.query(query, [req.params.id]);
         res.json(result.rows);
-    } catch (err) { 
-        console.error("Error al obtener documentos:", err.message);
-        res.status(500).json({ error: err.message }); 
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.delete('/api/admin/documentos/:id', verificarToken, async (req, res) => {
@@ -281,24 +271,17 @@ app.delete('/api/admin/documentos-empresa/:id', verificarToken, async (req, res)
 // --- NUEVAS RUTAS PARA APTITUD MÉDICA CON LOGS ---
 
 // server.js - Ruta corregida con UNION balanceado
+// 2. Solo documentos médicos y aptitud
 app.get('/api/doctor/aptitud/:id', verificarToken, permisoAdminDoc, async (req, res) => {
-    const esPasivo = req.query.pasivo === 'true';
-    const tablaPrincipal = esPasivo ? 'documentos_pasivos' : 'documentos';
-    
     try {
         const query = `
-            SELECT id, usuario_id, tipo_documento, url_cloudinary, nombre_user, created_at FROM ${tablaPrincipal} WHERE usuario_id = $1
-            UNION ALL
             SELECT id, usuario_id, tipo_documento, url_cloudinary, nombre_user, created_at FROM docus_medicos WHERE usuario_id = $1
             UNION ALL
             SELECT id, usuario_id, tipo_documento, url_cloudinary, nombre_user, created_at FROM certificados_aptitud WHERE usuario_id = $1
-            ORDER BY created_at DESC
-        `;
+            ORDER BY created_at DESC`;
         const result = await pool.query(query, [req.params.id]);
         res.json(result.rows);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 // server.js - Localiza esta ruta y reemplázala
 
