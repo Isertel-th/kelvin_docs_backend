@@ -175,8 +175,8 @@ app.post('/api/admin/mover-a-pasivo/:id', verificarToken, async (req, res) => {
 
 // 3. Mover los documentos generales a la tabla de pasivos resguardando la metadata real
 await client.query(
-    `INSERT INTO documentos_pasivos (usuario_id, tipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo) 
-     SELECT $1, tipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo FROM documentos WHERE usuario_id = $2`,
+    `INSERT INTO documentos_pasivos (usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo) 
+     SELECT $1, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo FROM documentos WHERE usuario_id = $2`,
     [nuevoId, u.id]
 );
 
@@ -200,9 +200,8 @@ await client.query(
 });
 
 app.post('/api/admin/subir-a-usuario', verificarToken, permisoAdminDoc, upload.single('archivo'), async (req, res) => {
-    // Recibimos los nuevos parámetros enviados por el HTML
-    const { tipo_documento, usuario_id, nombre_user, es_pasivo, nombre_archivo, fecha_documento, periodo } = req.body;
-    
+    const { tipo_documento, subtipo_documento, usuario_id, nombre_user, es_pasivo, nombre_archivo, fecha_documento, periodo } = req.body;
+
     let tabla;
     if (tipo_documento.includes("Certificado médico") || tipo_documento.includes("Reposo médico")) {
         tabla = 'docus_medicos';
@@ -211,11 +210,10 @@ app.post('/api/admin/subir-a-usuario', verificarToken, permisoAdminDoc, upload.s
     }
 
     try {
-        // Incluimos las nuevas columnas en el INSERT
         await pool.query(
-            `INSERT INTO ${tabla} (usuario_id, tipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7)`, 
-            [usuario_id, tipo_documento, req.file.path, nombre_user, nombre_archivo, fecha_documento || null, periodo || null]
+            `INSERT INTO ${tabla} (usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, 
+            [usuario_id, tipo_documento, subtipo_documento || 'General / Único', req.file.path, nombre_user, nombre_archivo, fecha_documento || null, periodo || null]
         );
         res.json({ message: 'Ok' });
     } catch (err) { 
@@ -227,8 +225,7 @@ app.get('/api/admin/documentos/:id', verificarToken, permisoAdminDoc, async (req
     const esPasivo = req.query.pasivo === 'true';
     const tablaPrincipal = esPasivo ? 'documentos_pasivos' : 'documentos';
     try {
-        // Añadimos nombre_archivo, fecha_documento y periodo al SELECT para que el frontend los lea
-        const query = `SELECT id, usuario_id, tipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
+        const query = `SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
                        FROM ${tablaPrincipal} WHERE usuario_id = $1 ORDER BY fecha_documento DESC, created_at DESC`;
         const result = await pool.query(query, [req.params.id]);
         res.json(result.rows);
@@ -280,11 +277,10 @@ app.delete('/api/admin/documentos-empresa/:id', verificarToken, async (req, res)
 // --- ENLACES DE APTITUD MÉDICA ---
 app.get('/api/doctor/aptitud/:id', verificarToken, permisoAdminDoc, async (req, res) => {
     try {
-        // Unificamos las columnas personalizadas en el UNION
         const query = `
-            SELECT id, usuario_id, tipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at FROM docus_medicos WHERE usuario_id = $1
+            SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at FROM docus_medicos WHERE usuario_id = $1
             UNION ALL
-            SELECT id, usuario_id, tipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at FROM certificados_aptitud WHERE usuario_id = $1
+            SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at FROM certificados_aptitud WHERE usuario_id = $1
             ORDER BY fecha_documento DESC, created_at DESC`;
         const result = await pool.query(query, [req.params.id]);
         res.json(result.rows);
@@ -292,9 +288,9 @@ app.get('/api/doctor/aptitud/:id', verificarToken, permisoAdminDoc, async (req, 
 });
 
 app.post('/api/doctor/subir-aptitud', verificarToken, permisoAdminDoc, upload.single('archivo'), async (req, res) => {
-    const { tipo_documento, usuario_id, es_pasivo, nombre_archivo, fecha_documento, periodo, nombre_user } = req.body;
+    const { tipo_documento, subtipo_documento, usuario_id, es_pasivo, nombre_archivo, fecha_documento, periodo, nombre_user } = req.body;
     let tabla;
-    
+
     if (tipo_documento.includes("Certificado médico") || tipo_documento.includes("Reposo médico")) {
         tabla = 'docus_medicos';
     } else if (tipo_documento.includes("Aptitud Médica") || tipo_documento.includes("Ficha Médica")) {
@@ -302,12 +298,12 @@ app.post('/api/doctor/subir-aptitud', verificarToken, permisoAdminDoc, upload.si
     } else {
         tabla = es_pasivo === 'true' ? 'documentos_pasivos' : 'documentos';
     }
-    
+
     try {
         await pool.query(
-            `INSERT INTO ${tabla} (usuario_id, tipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7)`, 
-            [usuario_id, tipo_documento, req.file.path, nombre_user || 'Servicio Médico', nombre_archivo, fecha_documento || null, periodo || null]
+            `INSERT INTO ${tabla} (usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, 
+            [usuario_id, tipo_documento, subtipo_documento || 'General / Único', req.file.path, nombre_user || 'Servicio Médico', nombre_archivo, fecha_documento || null, periodo || null]
         );
         res.json({ message: 'Ok' });
     } catch (err) {
@@ -338,7 +334,7 @@ app.delete('/api/doctor/aptitud/:id', verificarToken, permisoAdminDoc, async (re
 
 // --- ENLACES GESTOR KELVIN ---
 app.post('/api/kelvin/subir-certificados', verificarToken, permisoAdminDoc, upload.single('archivo'), async (req, res) => {
-    const { tipo_documento, usuario_id, nombre_archivo, fecha_documento, periodo } = req.body;
+    const { tipo_documento, subtipo_documento, usuario_id, nombre_archivo, fecha_documento, periodo } = req.body;
     let tabla = '';
 
     if (tipo_documento.toLowerCase().includes('competencia') || tipo_documento.toLowerCase().includes('técnico')) {
@@ -351,9 +347,9 @@ app.post('/api/kelvin/subir-certificados', verificarToken, permisoAdminDoc, uplo
 
     try {
         await pool.query(
-            `INSERT INTO ${tabla} (usuario_id, tipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7)`, 
-            [usuario_id, tipo_documento, req.file.path, 'Gestor Kelvin', nombre_archivo, fecha_documento || null, periodo || null]
+            `INSERT INTO ${tabla} (usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, 
+            [usuario_id, tipo_documento, subtipo_documento || 'General / Único', req.file.path, 'Gestor Kelvin', nombre_archivo, fecha_documento || null, periodo || null]
         );
         res.json({ message: 'Ok' });
     } catch (err) {
@@ -364,9 +360,9 @@ app.post('/api/kelvin/subir-certificados', verificarToken, permisoAdminDoc, uplo
 app.get('/api/kelvin/documentos/:id', verificarToken, permisoAdminDoc, async (req, res) => {
     try {
         const query = `
-            SELECT id, usuario_id, tipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at FROM certifi_competencia WHERE usuario_id = $1
+            SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at FROM certifi_competencia WHERE usuario_id = $1
             UNION ALL
-            SELECT id, usuario_id, tipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at FROM acta_epps WHERE usuario_id = $1
+            SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at FROM acta_epps WHERE usuario_id = $1
             ORDER BY fecha_documento DESC, created_at DESC
         `;
         const result = await pool.query(query, [req.params.id]);
@@ -375,7 +371,6 @@ app.get('/api/kelvin/documentos/:id', verificarToken, permisoAdminDoc, async (re
         res.status(500).json({ error: err.message });
     }
 });
-
 
 
 
