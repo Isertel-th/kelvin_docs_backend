@@ -90,6 +90,30 @@ app.post('/api/login', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+
+
+app.delete('/api/admin/documentos/:id', verificarToken, async (req, res) => {
+    if (req.user.rol !== 'admin') return res.status(403).json({ error: 'Acción restringida' });
+    
+    const { id } = req.params;
+    try {
+        // Eliminamos puntualmente de las tablas de administración general
+        const resActivo = await pool.query("DELETE FROM documentos WHERE id = $1", [id]);
+        const resPasivo = await pool.query("DELETE FROM documentos_pasivos WHERE id = $1", [id]);
+        
+        if (resActivo.rowCount > 0 || resPasivo.rowCount > 0) {
+            return res.json({ message: 'Ok' });
+        } else {
+            return res.status(404).json({ error: 'Documento administrativo no encontrado' });
+        }
+    } catch (err) {
+        res.status(500).json({ error: "Error en la base de datos al eliminar: " + err.message });
+    }
+});
+
+
+
+
 app.get('/api/admin/empleados', verificarToken, permisoAdminDoc, async (req, res) => {
     try {
         const result = await pool.query("SELECT * FROM nomina ORDER BY nombre_completo ASC");
@@ -107,21 +131,25 @@ app.get('/api/admin/pasivos', verificarToken, permisoAdminDoc, async (req, res) 
 app.post('/api/admin/crear-usuario', verificarToken, upload.single('foto'), async (req, res) => {
     if (req.user.rol !== 'admin') return res.status(403).json({ error: 'Solo el admin crea usuarios' });
     
-    const { cedula, nombre_completo, fecha_ingreso, correo, celular, direccion } = req.body;
+    const { cedula, nombre_completo, fecha_ingreso, correo, celular, direccion, username } = req.body;
     const foto_url = req.file ? req.file.path : null;
 
     if(!cedula || cedula.length !== 10) return res.status(400).json({ error: 'Cédula debe tener 10 dígitos' });
     if(!correo || !esCorreoValido(correo)) return res.status(400).json({ error: 'Correo inválido o dominio no permitido' });
     if(!nombre_completo || !foto_url) return res.status(400).json({ error: 'Faltan campos obligatorios o la foto' });
 
+    // Si no envías un username personalizado desde el frontend, usamos la cédula por defecto de forma segura
+    const usuarioLogin = username || cedula;
+
     try {
         await pool.query(
             'INSERT INTO nomina (username, cedula, nombre_completo, rol, fecha_ingreso, correo, celular, direccion, foto_url) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
-            [cedula, cedula, nombre_completo, 'user', fecha_ingreso || null, correo, celular, direccion, foto_url]
+            [usuarioLogin, cedula, nombre_completo, 'user', fecha_ingreso || null, correo, celular, direccion, foto_url]
         );
         res.json({ message: 'Ok' });
     } catch (err) { 
-        res.status(500).json({ error: "Error al guardar en Nomina. Verifique duplicados." }); 
+        console.error(err);
+        res.status(500).json({ error: "Error al guardar en Nómina. Verifique si la cédula o correo ya existen." }); 
     }
 });
 
@@ -286,15 +314,25 @@ app.post('/api/doctor/subir-aptitud', verificarToken, permisoAdminDoc, upload.si
         res.status(500).json({ error: err.message });
     }
 });
+// CORREGIDO: Endpoint del Médico (Ya no borra masivamente por ID duplicado)
 app.delete('/api/doctor/aptitud/:id', verificarToken, permisoAdminDoc, async (req, res) => {
+    if (req.user.rol !== 'doc' && req.user.rol !== 'admin') {
+        return res.status(403).json({ error: 'No tienes permisos para esta acción' });
+    }
+
+    const { id } = req.params;
     try {
-        await pool.query("DELETE FROM documentos WHERE id = $1", [req.params.id]);
-        await pool.query("DELETE FROM documentos_pasivos WHERE id = $1", [req.params.id]);
-        await pool.query("DELETE FROM docus_medicos WHERE id = $1", [req.params.id]);
-        await pool.query("DELETE FROM certificados_aptitud WHERE id = $1", [req.params.id]);
-        res.json({ message: 'Ok' });
+        // Borramos estrictamente de las tablas que le competen al departamento médico
+        const resMedico = await pool.query("DELETE FROM docus_medicos WHERE id = $1", [id]);
+        const resAptitud = await pool.query("DELETE FROM certificados_aptitud WHERE id = $1", [id]);
+        
+        if (resMedico.rowCount > 0 || resAptitud.rowCount > 0) {
+            return res.json({ message: 'Ok' });
+        } else {
+            return res.status(404).json({ error: 'Documento médico no encontrado' });
+        }
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: "Error en la base de datos al eliminar: " + err.message });
     }
 });
 
@@ -337,6 +375,34 @@ app.get('/api/kelvin/documentos/:id', verificarToken, permisoAdminDoc, async (re
         res.status(500).json({ error: err.message });
     }
 });
+
+
+
+
+// NUEVO: Endpoint para que el Gestor Kelvin pueda eliminar sus documentos técnicos
+app.delete('/api/kelvin/documentos/:id', verificarToken, permisoAdminDoc, async (req, res) => {
+    // Validamos que sea Kelvin o el administrador general
+    if (req.user.rol !== 'kelvin' && req.user.rol !== 'admin') {
+        return res.status(403).json({ error: 'No tienes permisos para esta acción' });
+    }
+
+    const { id } = req.params;
+    try {
+        // Borramos estrictamente de las tablas técnicas asignadas a Kelvin
+        const resCompetencia = await pool.query("DELETE FROM certifi_competencia WHERE id = $1", [id]);
+        const resEpp = await pool.query("DELETE FROM acta_epps WHERE id = $1", [id]);
+        
+        if (resCompetencia.rowCount > 0 || resEpp.rowCount > 0) {
+            return res.json({ message: 'Ok' });
+        } else {
+            return res.status(404).json({ error: 'Documento técnico no encontrado' });
+        }
+    } catch (err) {
+        res.status(500).json({ error: "Error en la base de datos al eliminar: " + err.message });
+    }
+});
+
+
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
