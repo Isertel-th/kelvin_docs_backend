@@ -39,40 +39,6 @@ const storage = new CloudinaryStorage({
 
 const upload = multer({ storage });
 
-// NUEVO: Almacenamiento dinámico exclusivo para Docs Empresa que usa el campo 'tipo_documento'
-const storageEmpresa = new CloudinaryStorage({
-    cloudinary: cloudinary,
-    params: async (req, file) => {
-        // Sanitizar el tipo de documento para transformarlo en un nombre de archivo seguro (ej: "reglamento_interno")
-        let nombreLimpio = req.body.tipo_documento ? req.body.tipo_documento : 'documento';
-        nombreLimpio = nombreLimpio
-            .toLowerCase()
-            .normalize("NFD")
-            .replace(/[\u0300-\u036f]/g, "") // Remueve tildes
-            .replace(/\s+/g, '_')            // Cambia espacios por guión bajo
-            .replace(/[^a-z0-9_]/g, '');     // Elimina caracteres especiales
-
-        return {
-            folder: 'isertel_empresa',
-            format: 'pdf', // Forzamos formato PDF en Cloudinary
-            public_id: `${nombreLimpio}` // Se guardará como 'reglamento_interno'
-        };
-    }
-});
-
-// Middleware Multer con filtro estricto de tipo de archivo (Solo PDF)
-const uploadEmpresa = multer({ 
-    storage: storageEmpresa,
-    fileFilter: (req, file, cb) => {
-        if (file.mimetype === 'application/pdf') {
-            cb(null, true);
-        } else {
-            cb(new Error('Solo se permiten archivos en formato PDF'), false);
-        }
-    }
-});
-
-
 // --- FUNCIONES DE VALIDACIÓN ---
 const esCorreoValido = (email) => {
     const dominiosPermitidos = ['gmail.com', 'gmail.es', 'outlook.com', 'outlook.es', 'hotmail.com', 'hotmail.es', 'isertel.com.ec']; 
@@ -190,31 +156,35 @@ app.post('/api/admin/crear-usuario', verificarToken, upload.single('foto'), asyn
 
 // ENDPOINT: Modificar datos de un empleado de nómina activa
 // ENDPOINT ACTUALIZADO: Modificar datos de un colaborador (Nómina o Pasivos)
-// ENDPOINT: Modificar datos de un empleado de nómina activa
-app.put('/api/admin/modificar-usuario/:id', verificarToken, upload.single('foto'), async (req, res) => {
-    if (req.user.rol !== 'admin') return res.status(403).json({ error: 'Solo el administrador puede modificar datos de nómina' });
+app.put('/api/admin/modificar-usuario/:tabla/:id', verificarToken, upload.single('foto'), async (req, res) => {
+    if (req.user.rol !== 'admin') return res.status(403).json({ error: 'Solo el administrador puede modificar datos' });
     
-    const { id } = req.params;
+    const { tabla, id } = req.params;
     const { cedula, nombre_completo, fecha_ingreso, correo, celular, direccion } = req.body;
     const nueva_foto_url = req.file ? req.file.path : null;
 
+    // Validar que solo se apunte a tablas permitidas por seguridad
+    if (tabla !== 'nomina' && tabla !== 'pasivos') {
+        return res.status(400).json({ error: 'Tabla de destino no válida' });
+    }
+
     if (!cedula || cedula.length !== 10) return res.status(400).json({ error: 'La cédula debe tener exactamente 10 dígitos' });
-    if (!correo || !esCorreoValido(correo)) return res.status(400).json6({ error: 'Correo inválido o dominio institucional no permitido' });
+    if (!correo || !esCorreoValido(correo)) return res.status(400).json({ error: 'Correo inválido o dominio institucional no permitido' });
     if (!nombre_completo) return res.status(400).json({ error: 'El nombre completo es obligatorio' });
 
     try {
-        // 1. Validar si el registro existe en la tabla nomina
-        const existeUser = await pool.query('SELECT foto_url FROM nomina WHERE id = $1', [id]);
+        // 1. Validar si el registro existe en la tabla seleccionada
+        const existeUser = await pool.query(`SELECT foto_url FROM ${tabla} WHERE id = $1`, [id]);
         if (existeUser.rows.length === 0) {
-            return res.status(404).json({ error: 'El colaborador no existe en la nómina activa.' });
+            return res.status(404).json({ error: `El colaborador no existe en la tabla de ${tabla}.` });
         }
 
-        // 2. Si no se subió una nueva foto, conservamos la que ya tenía almacenada
+        // 2. Conservar foto actual si no se sube una nueva
         const fotoFinal = nueva_foto_url ? nueva_foto_url : existeUser.rows[0].foto_url;
 
-        // 3. Ejecutar la actualización (se actualiza también el username por si se corrigió la cédula)
+        // 3. Ejecutar la actualización dinámica en la tabla correspondiente
         await pool.query(
-            `UPDATE nomina 
+            `UPDATE ${tabla} 
              SET username = $1, cedula = $2, nombre_completo = $3, fecha_ingreso = $4, correo = $5, celular = $6, direccion = $7, foto_url = $8 
              WHERE id = $9`,
             [cedula, cedula, nombre_completo, fecha_ingreso || null, correo, celular, direccion, fotoFinal, id]
@@ -223,9 +193,10 @@ app.put('/api/admin/modificar-usuario/:id', verificarToken, upload.single('foto'
         res.json({ message: 'Ok' });
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: "Error al actualizar los datos. Verifique que la cédula o correo no estén duplicados con otro empleado." });
+        res.status(500).json({ error: "Error al actualizar los datos. Verifique que la cédula o correo no estén duplicados." });
     }
 });
+
 
 
 
@@ -482,67 +453,7 @@ app.delete('/api/kelvin/documentos/:id', verificarToken, permisoAdminDoc, async 
     }
 });
 
-// 1. SUBIR DOCUMENTO (Solo Admin)
-app.post('/api/empresa/documentos', verificarToken, (req, res, next) => {
-    if (req.user.rol !== 'admin') return res.status(403).json({ error: 'Acción restringida. Solo el administrador puede subir archivos corporativos.' });
-    next();
-}, uploadEmpresa.single('archivo'), async (req, res) => {
-    try {
-        if (!req.file) {
-            return res.status(400).json({ error: 'Debe adjuntar obligatoriamente un archivo PDF.' });
-        }
 
-        const { tipo_documento } = req.body;
-        if (!tipo_documento) return res.status(400).json({ error: 'El tipo de documento es obligatorio.' });
-
-        // Sanitizar para guardar el string de archivo exacto en BD: reglamento_interno.pdf
-        const nombreFinalArchivo = tipo_documento
-            .toLowerCase()
-            .normalize("NFD")
-            .replace(/[\u0300-\u036f]/g, "")
-            .replace(/\s+/g, '_')
-            .replace(/[^a-z0-9_]/g, '') + '.pdf';
-
-        const query = `
-            INSERT INTO documentos_empresa (tipo_documento, nombre_archivo, url_cloudinary)
-            VALUES ($1, $2, $3) RETURNING *
-        `;
-        const result = await pool.query(query, [tipo_documento, nombreFinalArchivo, req.file.path]);
-        
-        res.json({ message: 'Ok', documento: result.rows[0] });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// 2. LISTAR DOCUMENTOS (Todos los roles autenticados pueden ver)
-app.get('/api/empresa/documentos', verificarToken, async (req, res) => {
-    try {
-        const result = await pool.query('SELECT * FROM documentos_empresa ORDER BY id DESC');
-        res.json(result.rows);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// 3. ELIMINAR DOCUMENTO (Solo Admin)
-app.delete('/api/empresa/documentos/:id', verificarToken, async (req, res) => {
-    if (req.user.rol !== 'admin') {
-        return res.status(403).json({ error: 'Acción restringida. Solo el administrador puede eliminar archivos corporativos.' });
-    }
-    
-    const { id } = req.params;
-    try {
-        const result = await pool.query('DELETE FROM documentos_empresa WHERE id = $1', [id]);
-        if (result.rowCount > 0) {
-            res.json({ message: 'Ok' });
-        } else {
-            res.status(404).json({ error: 'Documento no encontrado.' });
-        }
-    } catch (err) {
-        res.status(500).json({ error: 'Error al eliminar el documento: ' + err.message });
-    }
-});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
