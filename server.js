@@ -506,6 +506,7 @@ app.get('/api/empresa/documentos', verificarToken, async (req, res) => {
 });
 
 // 3. Eliminar un documento institucional
+// 3. Eliminar un documento institucional
 app.delete('/api/empresa/documentos/:id', verificarToken, async (req, res) => {
     if (req.user.rol !== 'admin') {
         return res.status(403).json({ error: 'Acción restringida. Solo el Administrador puede eliminar.' });
@@ -524,21 +525,32 @@ app.delete('/api/empresa/documentos/:id', verificarToken, async (req, res) => {
     }
 });
 
-//AHORA SI VAMOS CON LO DE LOS ADMINS
 // ==========================================
-//   RUTAS DE PERMISOS ESPECIALES (ADMIN)
+//   NUEVO: ENDPOINT PARA DEPARTAMENTOS
 // ==========================================
-
---
-// 1. Obtener lista de departamentos para el formulario
 app.get('/api/admin/departamentos', verificarToken, async (req, res) => {
     try {
-        const result = await pool.query('SELECT * FROM departamentos ORDER BY nombre ASC');
+        // Consultamos los departamentos únicos registrados en la nómina para mapearlos
+        const result = await pool.query('SELECT DISTINCT departamento FROM nomina WHERE departamento IS NOT NULL ORDER BY departamento ASC');
+        
+        // Si la tabla está vacía o no hay departamentos devueltos, enviamos unos por defecto
+        if (result.rows.length === 0) {
+            return res.json([
+                { departamento: 'TALENTO HUMANO' },
+                { departamento: 'OPERACIONES' },
+                { departamento: 'TECNOLOGÍA' }
+            ]);
+        }
+        
         res.json(result.rows);
     } catch (err) {
-        res.status(500).json({ error: 'Error al obtener departamentos: ' + err.message });
+        res.status(500).json({ error: 'Error al obtener los departamentos: ' + err.message });
     }
 });
+
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
 
 // 2. Registrar usuario de permisos especiales en la tabla 'usuarios'
 app.post('/api/admin/crear-permiso-especial', verificarToken, upload.single('foto'), async (req, res) => {
