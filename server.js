@@ -460,8 +460,8 @@ app.delete('/api/kelvin/documentos/:id', verificarToken, permisoAdminDoc, async 
 // ==========================================
 
 // 1. Subir documento institucional
+// 1. Subir documento institucional (Solo PDFs)
 app.post('/api/empresa/documentos', verificarToken, upload.single('archivo'), async (req, res) => {
-    // Puedes restringir el rol si lo deseas, p.ej. si solo admin puede subir
     if (req.user.rol !== 'admin') {
         return res.status(403).json({ error: 'No tienes permisos para subir documentos de empresa' });
     }
@@ -472,6 +472,11 @@ app.post('/api/empresa/documentos', verificarToken, upload.single('archivo'), as
 
     if (!tipo_documento || !archivo_url) {
         return res.status(400).json({ error: 'Faltan campos obligatorios: Tipo de documento o Archivo.' });
+    }
+
+    // VALIDACIÓN BACKEND: Verificar que Multer haya recibido un archivo PDF
+    if (req.file && req.file.mimetype !== 'application/pdf') {
+        return res.status(400).json({ error: 'El archivo subido no es un PDF válido.' });
     }
 
     try {
