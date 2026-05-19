@@ -531,21 +531,14 @@ app.delete('/api/empresa/documentos/:id', verificarToken, async (req, res) => {
 // ==========================================
 app.get('/api/admin/departamentos', verificarToken, async (req, res) => {
     try {
-        // Consultamos los departamentos únicos registrados en la nómina para mapearlos
-        const result = await pool.query('SELECT DISTINCT departamento FROM nomina WHERE departamento IS NOT NULL ORDER BY departamento ASC');
-        
-        // Si la tabla está vacía o no hay departamentos devueltos, enviamos los de respaldo
-        if (result.rows.length === 0) {
-            return res.json([
-                { departamento: 'TALENTO HUMANO' },
-                { departamento: 'OPERACIONES' },
-                { departamento: 'TECNOLOGÍA' }
-            ]);
-        }
-        
+        // Obtenemos los departamentos existentes sin repetir y descartando nulos o vacíos
+        const result = await pool.query(
+            "SELECT DISTINCT departamento FROM nomina WHERE departamento IS NOT NULL AND departamento != '' ORDER BY departamento ASC"
+        );
         res.json(result.rows);
     } catch (err) {
-        res.status(500).json({ error: 'Error al obtener los departamentos: ' + err.message });
+        console.error("Error al obtener departamentos:", err);
+        res.status(500).json({ error: err.message });
     }
 });
 
