@@ -203,13 +203,18 @@ app.post('/api/admin/subir-a-usuario', verificarToken, permisoAdminDoc, upload.s
     const { tipo_documento, subtipo_documento, usuario_id, nombre_user, es_pasivo, nombre_archivo, fecha_documento, periodo } = req.body;
 
     let tabla;
-    // Lógica unificada para determinar la tabla
-    if (tipo_documento === "Certificados Médicos") {
+    
+    // Nueva lógica de clasificación
+    if (tipo_documento === "Certificado de Competencia") {
+        tabla = 'certifi_competencia';
+    } else if (tipo_documento === "Acta de EPP's") {
+        tabla = 'acta_epps';
+    } else if (tipo_documento === "Certificados Médicos") {
         tabla = 'docus_medicos';
     } else if (tipo_documento === "Certificados de Aptitud") {
         tabla = 'certificados_aptitud';
     } else {
-        // Para cualquier otro documento
+        // Para cualquier otro documento general
         tabla = es_pasivo === 'true' ? 'documentos_pasivos' : 'documentos';
     }
 
@@ -340,12 +345,13 @@ app.post('/api/kelvin/subir-certificados', verificarToken, permisoAdminDoc, uplo
     const { tipo_documento, subtipo_documento, usuario_id, nombre_archivo, fecha_documento, periodo } = req.body;
     let tabla = '';
 
-    if (tipo_documento.toLowerCase().includes('competencia') || tipo_documento.toLowerCase().includes('técnico')) {
+    // Coincidencia exacta con el admin
+    if (tipo_documento === "Certificado de Competencia") {
         tabla = 'certifi_competencia';
-    } else if (tipo_documento.toLowerCase().includes('epp')) {
+    } else if (tipo_documento === "Acta de EPP's") {
         tabla = 'acta_epps';
     } else {
-        return res.status(400).json({ error: "Tipo de documento no reconocido para este panel" });
+        return res.status(400).json({ error: "Tipo de documento no permitido para Kelvin" });
     }
 
     try {
