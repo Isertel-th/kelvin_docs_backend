@@ -203,9 +203,13 @@ app.post('/api/admin/subir-a-usuario', verificarToken, permisoAdminDoc, upload.s
     const { tipo_documento, subtipo_documento, usuario_id, nombre_user, es_pasivo, nombre_archivo, fecha_documento, periodo } = req.body;
 
     let tabla;
-    if (tipo_documento.includes("Certificado médico") || tipo_documento.includes("Reposo médico")) {
+    // Lógica unificada para determinar la tabla
+    if (tipo_documento === "Certificados Médicos") {
         tabla = 'docus_medicos';
+    } else if (tipo_documento === "Certificados de Aptitud") {
+        tabla = 'certificados_aptitud';
     } else {
+        // Para cualquier otro documento
         tabla = es_pasivo === 'true' ? 'documentos_pasivos' : 'documentos';
     }
 
@@ -217,7 +221,7 @@ app.post('/api/admin/subir-a-usuario', verificarToken, permisoAdminDoc, upload.s
         );
         res.json({ message: 'Ok' });
     } catch (err) { 
-        res.status(500).json({ error: err.message }); 
+        res.status(500).json({ error: err.message });
     }
 });
 
