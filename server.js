@@ -455,5 +455,70 @@ app.delete('/api/kelvin/documentos/:id', verificarToken, permisoAdminDoc, async 
 
 
 
+// ==========================================
+//   RUTAS PARA REPOSITORIO EMPRESA
+// ==========================================
+
+// 1. Subir documento institucional
+app.post('/api/empresa/documentos', verificarToken, upload.single('archivo'), async (req, res) => {
+    // Puedes restringir el rol si lo deseas, p.ej. si solo admin puede subir
+    if (req.user.rol !== 'admin') {
+        return res.status(403).json({ error: 'No tienes permisos para subir documentos de empresa' });
+    }
+
+    const { tipo_documento } = req.body;
+    const archivo_url = req.file ? req.file.path : null;
+    const nombre_original = req.file ? req.file.originalname : null;
+
+    if (!tipo_documento || !archivo_url) {
+        return res.status(400).json({ error: 'Faltan campos obligatorios: Tipo de documento o Archivo.' });
+    }
+
+    try {
+        const query = `
+            INSERT INTO documentos_empresa (tipo_documento, url_cloudinary, nombre_archivo)
+            VALUES ($1, $2, $3)
+            RETURNING *
+        `;
+        const result = await pool.query(query, [tipo_documento, archivo_url, nombre_original]);
+        res.json({ message: 'Ok', documento: result.rows[0] });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al registrar el documento institucional: ' + err.message });
+    }
+});
+
+// 2. Obtener todos los documentos del repositorio institucional
+app.get('/api/empresa/documentos', verificarToken, async (req, res) => {
+    try {
+        const query = 'SELECT id, tipo_documento, url_cloudinary, nombre_archivo, fecha_subida FROM documentos_empresa ORDER BY fecha_subida DESC';
+        const result = await pool.query(query);
+        res.json(result.rows);
+    } catch (err) {
+        res.status(500).json({ error: 'Error al obtener repositorio corporativo: ' + err.message });
+    }
+});
+
+// 3. Eliminar un documento institucional
+app.delete('/api/empresa/documentos/:id', verificarToken, async (req, res) => {
+    if (req.user.rol !== 'admin') {
+        return res.status(403).json({ error: 'Acción restringida. Solo el Administrador puede eliminar.' });
+    }
+
+    const { id } = req.params;
+    try {
+        const result = await pool.query('DELETE FROM documentos_empresa WHERE id = $1', [id]);
+        if (result.rowCount > 0) {
+            res.json({ message: 'Ok' });
+        } else {
+            res.status(404).json({ error: 'Documento no encontrado' });
+        }
+    } catch (err) {
+        res.status(500).json({ error: 'Error al eliminar de la base de datos: ' + err.message });
+    }
+});
+
+
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
