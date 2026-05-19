@@ -526,14 +526,15 @@ app.delete('/api/empresa/documentos/:id', verificarToken, async (req, res) => {
     }
 });
 
+
+
+//PERMISOOOOOOOOOOOOS
 // ==========================================
 //   ENDPOINT PARA MAPEAR DEPARTAMENTOS
 // ==========================================
-// Endpoint para obtener la lista de departamentos
-// Asegúrate de que esta ruta devuelva los campos correctos
-app.get('/admin/departamentos', async (req, res) => {
+// Corregido: Se añade '/api' para mantener el estándar con las otras rutas
+app.get('/api/admin/departamentos', async (req, res) => {
     try {
-        // Ajusta los nombres de columna: id y nombre
         const result = await pool.query('SELECT id, nombre FROM departamentos ORDER BY nombre ASC');
         res.json(result.rows);
     } catch (err) {
@@ -542,11 +543,8 @@ app.get('/admin/departamentos', async (req, res) => {
     }
 });
 
-
-
-// 2. Registrar usuario de permisos especiales en la tabla 'usuarios'
+// Registrar usuario (Esta ruta la tenías bien, la mantenemos igual)
 app.post('/api/admin/crear-permiso-especial', verificarToken, upload.single('foto'), async (req, res) => {
-    // Restricción estricta de seguridad: solo admin real
     if (req.user.rol !== 'admin') {
         return res.status(403).json({ error: 'Solo el administrador general puede otorgar permisos especiales.' });
     }
@@ -554,13 +552,13 @@ app.post('/api/admin/crear-permiso-especial', verificarToken, upload.single('fot
     const { username, cedula, nombre_completo, correo, celular, departamento_id, rol } = req.body;
     const foto_url = req.file ? req.file.path : null;
 
-    // Validaciones de negocio robustas
     if (!username || !cedula || !nombre_completo || !rol) {
         return res.status(400).json({ error: 'Faltan campos mandatorios (Username, Cédula, Nombre, Rol).' });
     }
     if (cedula.length !== 10) {
         return res.status(400).json({ error: 'La cédula debe contener exactamente 10 dígitos.' });
     }
+    // Asumiendo que esCorreoValido ya existe en tu entorno
     if (correo && !esCorreoValido(correo)) {
         return res.status(400).json({ error: 'El correo electrónico ingresado no pertenece a un dominio permitido.' });
     }
@@ -587,10 +585,9 @@ app.post('/api/admin/crear-permiso-especial', verificarToken, upload.single('fot
 
     } catch (err) {
         console.error('❌ Error al crear usuario especial:', err);
-        res.status(500).json({ error: 'Error al guardar el usuario corporativo. Verifique que el username o cédula no estén duplicados.' });
+        res.status(500).json({ error: 'Error al guardar el usuario. Verifique duplicados.' });
     }
 });
-
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
