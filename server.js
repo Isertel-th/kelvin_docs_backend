@@ -39,6 +39,40 @@ const storage = new CloudinaryStorage({
 
 const upload = multer({ storage });
 
+// NUEVO: Almacenamiento dinámico exclusivo para Docs Empresa que usa el campo 'tipo_documento'
+const storageEmpresa = new CloudinaryStorage({
+    cloudinary: cloudinary,
+    params: async (req, file) => {
+        // Sanitizar el tipo de documento para transformarlo en un nombre de archivo seguro (ej: "reglamento_interno")
+        let nombreLimpio = req.body.tipo_documento ? req.body.tipo_documento : 'documento';
+        nombreLimpio = nombreLimpio
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "") // Remueve tildes
+            .replace(/\s+/g, '_')            // Cambia espacios por guión bajo
+            .replace(/[^a-z0-9_]/g, '');     // Elimina caracteres especiales
+
+        return {
+            folder: 'isertel_empresa',
+            format: 'pdf', // Forzamos formato PDF en Cloudinary
+            public_id: `${nombreLimpio}` // Se guardará como 'reglamento_interno'
+        };
+    }
+});
+
+// Middleware Multer con filtro estricto de tipo de archivo (Solo PDF)
+const uploadEmpresa = multer({ 
+    storage: storageEmpresa,
+    fileFilter: (req, file, cb) => {
+        if (file.mimetype === 'application/pdf') {
+            cb(null, true);
+        } else {
+            cb(new Error('Solo se permiten archivos en formato PDF'), false);
+        }
+    }
+});
+
+
 // --- FUNCIONES DE VALIDACIÓN ---
 const esCorreoValido = (email) => {
     const dominiosPermitidos = ['gmail.com', 'gmail.es', 'outlook.com', 'outlook.es', 'hotmail.com', 'hotmail.es', 'isertel.com.ec']; 
@@ -453,7 +487,67 @@ app.delete('/api/kelvin/documentos/:id', verificarToken, permisoAdminDoc, async 
     }
 });
 
+// 1. SUBIR DOCUMENTO (Solo Admin)
+app.post('/api/empresa/documentos', verificarToken, (req, res, next) => {
+    if (req.user.rol !== 'admin') return res.status(403).json({ error: 'Acción restringida. Solo el administrador puede subir archivos corporativos.' });
+    next();
+}, uploadEmpresa.single('archivo'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'Debe adjuntar obligatoriamente un archivo PDF.' });
+        }
 
+        const { tipo_documento } = req.body;
+        if (!tipo_documento) return res.status(400).json({ error: 'El tipo de documento es obligatorio.' });
+
+        // Sanitizar para guardar el string de archivo exacto en BD: reglamento_interno.pdf
+        const nombreFinalArchivo = tipo_documento
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .replace(/\s+/g, '_')
+            .replace(/[^a-z0-9_]/g, '') + '.pdf';
+
+        const query = `
+            INSERT INTO documentos_empresa (tipo_documento, nombre_archivo, url_cloudinary)
+            VALUES ($1, $2, $3) RETURNING *
+        `;
+        const result = await pool.query(query, [tipo_documento, nombreFinalArchivo, req.file.path]);
+        
+        res.json({ message: 'Ok', documento: result.rows[0] });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 2. LISTAR DOCUMENTOS (Todos los roles autenticados pueden ver)
+app.get('/api/empresa/documentos', verificarToken, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM documentos_empresa ORDER BY id DESC');
+        res.json(result.rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 3. ELIMINAR DOCUMENTO (Solo Admin)
+app.delete('/api/empresa/documentos/:id', verificarToken, async (req, res) => {
+    if (req.user.rol !== 'admin') {
+        return res.status(403).json({ error: 'Acción restringida. Solo el administrador puede eliminar archivos corporativos.' });
+    }
+    
+    const { id } = req.params;
+    try {
+        const result = await pool.query('DELETE FROM documentos_empresa WHERE id = $1', [id]);
+        if (result.rowCount > 0) {
+            res.json({ message: 'Ok' });
+        } else {
+            res.status(404).json({ error: 'Documento no encontrado.' });
+        }
+    } catch (err) {
+        res.status(500).json({ error: 'Error al eliminar el documento: ' + err.message });
+    }
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
