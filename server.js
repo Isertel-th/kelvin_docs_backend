@@ -291,26 +291,26 @@ app.get('/api/doctor/aptitud/:id', verificarToken, permisoAdminDoc, async (req, 
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Asegúrate de que este endpoint tenga la lógica completa de clasificación
 app.post('/api/doctor/subir-aptitud', verificarToken, permisoAdminDoc, upload.single('archivo'), async (req, res) => {
-    const { tipo_documento, subtipo_documento, usuario_id, es_pasivo, nombre_archivo, fecha_documento, periodo, nombre_user } = req.body;
-    let tabla;
-
-    if (tipo_documento.includes("Certificado médico") || tipo_documento.includes("Reposo médico")) {
+    const { tipo_documento, subtipo_documento, usuario_id, nombre_user, nombre_archivo, fecha_documento, periodo } = req.body;
+    
+    // AQUÍ ESTÁ LA CLAVE: Definir la tabla según el tipo
+    let tabla = 'documentos'; // Por defecto
+    if (tipo_documento === 'Certificados Médicos') {
         tabla = 'docus_medicos';
-    } else if (tipo_documento.includes("Aptitud Médica") || tipo_documento.includes("Ficha Médica")) {
+    } else if (tipo_documento === 'Certificados de Aptitud') {
         tabla = 'certificados_aptitud';
-    } else {
-        tabla = es_pasivo === 'true' ? 'documentos_pasivos' : 'documentos';
     }
 
     try {
         await pool.query(
             `INSERT INTO ${tabla} (usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo) 
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, 
-            [usuario_id, tipo_documento, subtipo_documento || 'General / Único', req.file.path, nombre_user || 'Servicio Médico', nombre_archivo, fecha_documento || null, periodo || null]
+            [usuario_id, tipo_documento, subtipo_documento, req.file.path, nombre_user, nombre_archivo, fecha_documento, periodo]
         );
         res.json({ message: 'Ok' });
-    } catch (err) {
+    } catch (err) { 
         res.status(500).json({ error: err.message });
     }
 });
