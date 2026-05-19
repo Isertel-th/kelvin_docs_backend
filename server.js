@@ -43,24 +43,18 @@ const upload = multer({ storage });
 const storageEmpresa = new CloudinaryStorage({
     cloudinary: cloudinary,
     params: async (req, file) => {
-        // Sanitizar el tipo de documento para transformarlo en un nombre de archivo seguro (ej: "reglamento_interno")
-        let nombreLimpio = req.body.tipo_documento ? req.body.tipo_documento : 'documento';
-        nombreLimpio = nombreLimpio
-            .toLowerCase()
-            .normalize("NFD")
-            .replace(/[\u0300-\u036f]/g, "") // Remueve tildes
-            .replace(/\s+/g, '_')            // Cambia espacios por guión bajo
-            .replace(/[^a-z0-9_]/g, '');     // Elimina caracteres especiales
+        // Obtenemos lo que el usuario escribió directamente en el formulario sin alteraciones
+        let nombreEscrito = req.body.tipo_documento ? req.body.tipo_documento : 'documento';
 
         return {
             folder: 'isertel_empresa',
             format: 'pdf', // Forzamos formato PDF en Cloudinary
-            public_id: `${nombreLimpio}` // Se guardará como 'reglamento_interno'
+            public_id: `${nombreEscrito}` // Se guarda con el nombre exacto (Ej: "hola xd jaja")
         };
     }
 });
 
-// Middleware Multer con filtro estricto de tipo de archivo (Solo PDF)
+// Middleware Multer para Empresa
 const uploadEmpresa = multer({ 
     storage: storageEmpresa,
     fileFilter: (req, file, cb) => {
@@ -483,31 +477,33 @@ app.delete('/api/kelvin/documentos/:id', verificarToken, permisoAdminDoc, async 
 });
 
 // 1. SUBIR DOCUMENTO (Solo Admin)
-app.post('/api/empresa/documentos', verificarToken, (req, res, next) => {
-    if (req.user.rol !== 'admin') return res.status(403).json({ error: 'Acción restringida. Solo el administrador puede subir archivos corporativos.' });
-    next();
-}, uploadEmpresa.single('archivo'), async (req, res) => {
+// 1. SUBIR DOCUMENTO INSTITUCIONAL (Guarda la fecha actual en la base de datos)
+app.post('/api/empresa/documentos', verificarToken, uploadEmpresa.single('archivo'), async (req, res) => {
+    if (req.user.rol !== 'admin') {
+        return res.status(403).json({ error: 'Solo el administrador puede subir archivos corporativos.' });
+    }
+
+    const { tipo_documento } = req.body;
+    if (!tipo_documento || !req.file) {
+        return res.status(400).json({ error: 'Faltan campos obligatorios o el archivo PDF.' });
+    }
+
     try {
-        if (!req.file) {
-            return res.status(400).json({ error: 'Debe adjuntar obligatoriamente un archivo PDF.' });
-        }
+        // Captura de la fecha actual en formato Año-Mes-Día (YYYY-MM-DD)
+        const fechaActual = new Date().toISOString().split('T')[0];
+        
+        // El nombre del archivo en Cloudinary será exactamente lo que escribió + ".pdf"
+        const nombreFinalArchivo = `${tipo_documento}.pdf`;
 
-        const { tipo_documento } = req.body;
-        if (!tipo_documento) return res.status(400).json({ error: 'El tipo de documento es obligatorio.' });
-
-        // Sanitizar para guardar el string de archivo exacto en BD: reglamento_interno.pdf
-        const nombreFinalArchivo = tipo_documento
-            .toLowerCase()
-            .normalize("NFD")
-            .replace(/[\u0300-\u036f]/g, "")
-            .replace(/\s+/g, '_')
-            .replace(/[^a-z0-9_]/g, '') + '.pdf';
-
+        // Modificamos el INSERT para guardar la fecha actual en la columna correspondiente
         const query = `
-            INSERT INTO documentos_empresa (tipo_documento, nombre_archivo, url_cloudinary)
-            VALUES ($1, $2, $3) RETURNING *
-        `;
-        const result = await pool.query(query, [tipo_documento, nombreFinalArchivo, req.file.path]);
+            INSERT INTO documentos_empresa (tipo_documento, nombre_archivo, url_archivo) 
+            VALUES ($1, $2, $3) 
+            RETURNING *`;
+            
+        // NOTA: Si tu columna en la tabla pasó de llamarse 'nombre_archivo' a 'fecha_subida', 
+        // puedes pasar directamente 'fechaActual' en lugar de 'nombreFinalArchivo' aquí abajo:
+        const result = await pool.query(query, [tipo_documento, fechaActual, req.file.path]);
         
         res.json({ message: 'Ok', documento: result.rows[0] });
     } catch (err) {
