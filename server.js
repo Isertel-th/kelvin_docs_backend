@@ -40,21 +40,22 @@ const storage = new CloudinaryStorage({
 const upload = multer({ storage });
 
 // NUEVO: Almacenamiento dinámico exclusivo para Docs Empresa que usa el campo 'tipo_documento'
-// NUEVO: Almacenamiento dinámico exclusivo para Docs Empresa que usa la FECHA DE SUBIDA
 const storageEmpresa = new CloudinaryStorage({
     cloudinary: cloudinary,
     params: async (req, file) => {
-        // Obtener la fecha actual en formato local (Año-Mes-Día)
-        const hoy = new Date();
-        const yyyy = hoy.getFullYear();
-        const mm = String(hoy.getMonth() + 1).padStart(2, '0');
-        const dd = String(hoy.getDate()).padStart(2, '0');
-        const fechaSubida = `${yyyy}-${mm}-${dd}`;
+        // Sanitizar el tipo de documento para transformarlo en un nombre de archivo seguro (ej: "reglamento_interno")
+        let nombreLimpio = req.body.tipo_documento ? req.body.tipo_documento : 'documento';
+        nombreLimpio = nombreLimpio
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "") // Remueve tildes
+            .replace(/\s+/g, '_')            // Cambia espacios por guión bajo
+            .replace(/[^a-z0-9_]/g, '');     // Elimina caracteres especiales
 
         return {
             folder: 'isertel_empresa',
             format: 'pdf', // Forzamos formato PDF en Cloudinary
-            public_id: `subido_${fechaSubida}_${Date.now()}` // Ejemplo: subido_2026-05-19_1716123456
+            public_id: `${nombreLimpio}` // Se guardará como 'reglamento_interno'
         };
     }
 });
@@ -482,18 +483,31 @@ app.delete('/api/kelvin/documentos/:id', verificarToken, permisoAdminDoc, async 
 });
 
 // 1. SUBIR DOCUMENTO (Solo Admin)
-// Ejemplo de inserción en el endpoint de subida de empresa
-app.post('/api/empresa/documentos', verificarToken, uploadEmpresa.single('archivo'), async (req, res) => {
+app.post('/api/empresa/documentos', verificarToken, (req, res, next) => {
+    if (req.user.rol !== 'admin') return res.status(403).json({ error: 'Acción restringida. Solo el administrador puede subir archivos corporativos.' });
+    next();
+}, uploadEmpresa.single('archivo'), async (req, res) => {
     try {
-        const { tipo_documento } = req.body;
-        
-        // Formatear fecha para la base de datos (DD/MM/YYYY o YYYY-MM-DD)
-        const hoy = new Date();
-        const fechaTabla = hoy.toLocaleDateString('es-EC'); // Genera "19/5/2026" o similar según región
+        if (!req.file) {
+            return res.status(400).json({ error: 'Debe adjuntar obligatoriamente un archivo PDF.' });
+        }
 
-        // Insertar en la base de datos: guardamos la fecha en el tercer parámetro (columna del Nombre Real)
-        const query = 'INSERT INTO documentos_empresa (tipo_documento, nombre_archivo, url_archivo) VALUES ($1, $2, $3) RETURNING *';
-        const result = await pool.query(query, [tipo_documento, fechaTabla, req.file.path]);
+        const { tipo_documento } = req.body;
+        if (!tipo_documento) return res.status(400).json({ error: 'El tipo de documento es obligatorio.' });
+
+        // Sanitizar para guardar el string de archivo exacto en BD: reglamento_interno.pdf
+        const nombreFinalArchivo = tipo_documento
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .replace(/\s+/g, '_')
+            .replace(/[^a-z0-9_]/g, '') + '.pdf';
+
+        const query = `
+            INSERT INTO documentos_empresa (tipo_documento, nombre_archivo, url_cloudinary)
+            VALUES ($1, $2, $3) RETURNING *
+        `;
+        const result = await pool.query(query, [tipo_documento, nombreFinalArchivo, req.file.path]);
         
         res.json({ message: 'Ok', documento: result.rows[0] });
     } catch (err) {
