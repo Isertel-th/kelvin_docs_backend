@@ -155,30 +155,36 @@ app.post('/api/admin/crear-usuario', verificarToken, upload.single('foto'), asyn
 
 
 // ENDPOINT: Modificar datos de un empleado de nómina activa
-app.put('/api/admin/modificar-usuario/:id', verificarToken, upload.single('foto'), async (req, res) => {
-    if (req.user.rol !== 'admin') return res.status(403).json({ error: 'Solo el administrador puede modificar datos de nómina' });
+// ENDPOINT ACTUALIZADO: Modificar datos de un colaborador (Nómina o Pasivos)
+app.put('/api/admin/modificar-usuario/:tabla/:id', verificarToken, upload.single('foto'), async (req, res) => {
+    if (req.user.rol !== 'admin') return res.status(403).json({ error: 'Solo el administrador puede modificar datos' });
     
-    const { id } = req.params;
+    const { tabla, id } = req.params;
     const { cedula, nombre_completo, fecha_ingreso, correo, celular, direccion } = req.body;
     const nueva_foto_url = req.file ? req.file.path : null;
 
+    // Validar que solo se apunte a tablas permitidas por seguridad
+    if (tabla !== 'nomina' && tabla !== 'pasivos') {
+        return res.status(400).json({ error: 'Tabla de destino no válida' });
+    }
+
     if (!cedula || cedula.length !== 10) return res.status(400).json({ error: 'La cédula debe tener exactamente 10 dígitos' });
-    if (!correo || !esCorreoValido(correo)) return res.status(400).json6({ error: 'Correo inválido o dominio institucional no permitido' });
+    if (!correo || !esCorreoValido(correo)) return res.status(400).json({ error: 'Correo inválido o dominio institucional no permitido' });
     if (!nombre_completo) return res.status(400).json({ error: 'El nombre completo es obligatorio' });
 
     try {
-        // 1. Validar si el registro existe en la tabla nomina
-        const existeUser = await pool.query('SELECT foto_url FROM nomina WHERE id = $1', [id]);
+        // 1. Validar si el registro existe en la tabla seleccionada
+        const existeUser = await pool.query(`SELECT foto_url FROM ${tabla} WHERE id = $1`, [id]);
         if (existeUser.rows.length === 0) {
-            return res.status(404).json({ error: 'El colaborador no existe en la nómina activa.' });
+            return res.status(404).json({ error: `El colaborador no existe en la tabla de ${tabla}.` });
         }
 
-        // 2. Si no se subió una nueva foto, conservamos la que ya tenía almacenada
+        // 2. Conservar foto actual si no se sube una nueva
         const fotoFinal = nueva_foto_url ? nueva_foto_url : existeUser.rows[0].foto_url;
 
-        // 3. Ejecutar la actualización (se actualiza también el username por si se corrigió la cédula)
+        // 3. Ejecutar la actualización dinámica en la tabla correspondiente
         await pool.query(
-            `UPDATE nomina 
+            `UPDATE ${tabla} 
              SET username = $1, cedula = $2, nombre_completo = $3, fecha_ingreso = $4, correo = $5, celular = $6, direccion = $7, foto_url = $8 
              WHERE id = $9`,
             [cedula, cedula, nombre_completo, fecha_ingreso || null, correo, celular, direccion, fotoFinal, id]
@@ -187,7 +193,7 @@ app.put('/api/admin/modificar-usuario/:id', verificarToken, upload.single('foto'
         res.json({ message: 'Ok' });
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: "Error al actualizar los datos. Verifique que la cédula o correo no estén duplicados con otro empleado." });
+        res.status(500).json({ error: "Error al actualizar los datos. Verifique que la cédula o correo no estén duplicados." });
     }
 });
 
