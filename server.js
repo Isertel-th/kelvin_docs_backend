@@ -461,9 +461,10 @@ app.delete('/api/kelvin/documentos/:id', verificarToken, permisoAdminDoc, async 
 
 // 1. Subir documento institucional
 // 1. Subir documento institucional (Solo PDFs)
-app.post('/api/empresa/documentos', verificarToken, upload.single('archivo'), async (req, res) => {
+app.post('/api/empresa/documentos', verificarToken, async (req, res) => {
+    // Restricción estricta: Solo el admin puede subir archivos corporativos
     if (req.user.rol !== 'admin') {
-        return res.status(403).json({ error: 'No tienes permisos para subir documentos de empresa' });
+        return res.status(403).json({ error: 'Acción denegada. Solo el Administrador puede subir documentos.' });
     }
 
     const { tipo_documento } = req.body;
@@ -519,7 +520,7 @@ app.delete('/api/empresa/documentos/:id', verificarToken, async (req, res) => {
             res.status(404).json({ error: 'Documento no encontrado' });
         }
     } catch (err) {
-        res.status(500).json({ error: 'Error al eliminar de la base de datos: ' + err.message });
+        res.status(500).json({ error: 'Error al eliminar el documento: ' + err.message });
     }
 });
 
