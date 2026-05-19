@@ -322,14 +322,13 @@ app.delete('/api/doctor/aptitud/:id', verificarToken, permisoAdminDoc, async (re
 
     const { id } = req.params;
     try {
-        // Borramos estrictamente de las tablas que le competen al departamento médico
         const resMedico = await pool.query("DELETE FROM docus_medicos WHERE id = $1", [id]);
         const resAptitud = await pool.query("DELETE FROM certificados_aptitud WHERE id = $1", [id]);
         
         if (resMedico.rowCount > 0 || resAptitud.rowCount > 0) {
             return res.json({ message: 'Ok' });
         } else {
-            return res.status(404).json({ error: 'Documento médico no encontrado' });
+            return res.status(404).json({ error: 'Documento médico no encontrado en los registros de salud' });
         }
     } catch (err) {
         res.status(500).json({ error: "Error en la base de datos al eliminar: " + err.message });
