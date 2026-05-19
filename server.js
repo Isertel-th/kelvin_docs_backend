@@ -40,21 +40,26 @@ const storage = new CloudinaryStorage({
 const upload = multer({ storage });
 
 // NUEVO: Almacenamiento dinámico exclusivo para Docs Empresa que usa el campo 'tipo_documento'
+// NUEVO: Almacenamiento dinámico exclusivo para Docs Empresa que usa la FECHA DE SUBIDA
 const storageEmpresa = new CloudinaryStorage({
     cloudinary: cloudinary,
     params: async (req, file) => {
-        // Obtenemos lo que el usuario escribió directamente en el formulario sin alteraciones
-        let nombreEscrito = req.body.tipo_documento ? req.body.tipo_documento : 'documento';
+        // Obtener la fecha actual en formato local (Año-Mes-Día)
+        const hoy = new Date();
+        const yyyy = hoy.getFullYear();
+        const mm = String(hoy.getMonth() + 1).padStart(2, '0');
+        const dd = String(hoy.getDate()).padStart(2, '0');
+        const fechaSubida = `${yyyy}-${mm}-${dd}`;
 
         return {
             folder: 'isertel_empresa',
             format: 'pdf', // Forzamos formato PDF en Cloudinary
-            public_id: `${nombreEscrito}` // Se guarda con el nombre exacto (Ej: "hola xd jaja")
+            public_id: `subido_${fechaSubida}_${Date.now()}` // Ejemplo: subido_2026-05-19_1716123456
         };
     }
 });
 
-// Middleware Multer para Empresa
+// Middleware Multer con filtro estricto de tipo de archivo (Solo PDF)
 const uploadEmpresa = multer({ 
     storage: storageEmpresa,
     fileFilter: (req, file, cb) => {
@@ -477,33 +482,18 @@ app.delete('/api/kelvin/documentos/:id', verificarToken, permisoAdminDoc, async 
 });
 
 // 1. SUBIR DOCUMENTO (Solo Admin)
-// 1. SUBIR DOCUMENTO INSTITUCIONAL (Guarda la fecha actual en la base de datos)
+// Ejemplo de inserción en el endpoint de subida de empresa
 app.post('/api/empresa/documentos', verificarToken, uploadEmpresa.single('archivo'), async (req, res) => {
-    if (req.user.rol !== 'admin') {
-        return res.status(403).json({ error: 'Solo el administrador puede subir archivos corporativos.' });
-    }
-
-    const { tipo_documento } = req.body;
-    if (!tipo_documento || !req.file) {
-        return res.status(400).json({ error: 'Faltan campos obligatorios o el archivo PDF.' });
-    }
-
     try {
-        // Captura de la fecha actual en formato Año-Mes-Día (YYYY-MM-DD)
-        const fechaActual = new Date().toISOString().split('T')[0];
+        const { tipo_documento } = req.body;
         
-        // El nombre del archivo en Cloudinary será exactamente lo que escribió + ".pdf"
-        const nombreFinalArchivo = `${tipo_documento}.pdf`;
+        // Formatear fecha para la base de datos (DD/MM/YYYY o YYYY-MM-DD)
+        const hoy = new Date();
+        const fechaTabla = hoy.toLocaleDateString('es-EC'); // Genera "19/5/2026" o similar según región
 
-        // Modificamos el INSERT para guardar la fecha actual en la columna correspondiente
-        const query = `
-            INSERT INTO documentos_empresa (tipo_documento, nombre_archivo, url_archivo) 
-            VALUES ($1, $2, $3) 
-            RETURNING *`;
-            
-        // NOTA: Si tu columna en la tabla pasó de llamarse 'nombre_archivo' a 'fecha_subida', 
-        // puedes pasar directamente 'fechaActual' en lugar de 'nombreFinalArchivo' aquí abajo:
-        const result = await pool.query(query, [tipo_documento, fechaActual, req.file.path]);
+        // Insertar en la base de datos: guardamos la fecha en el tercer parámetro (columna del Nombre Real)
+        const query = 'INSERT INTO documentos_empresa (tipo_documento, nombre_archivo, url_archivo) VALUES ($1, $2, $3) RETURNING *';
+        const result = await pool.query(query, [tipo_documento, fechaTabla, req.file.path]);
         
         res.json({ message: 'Ok', documento: result.rows[0] });
     } catch (err) {
