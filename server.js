@@ -529,24 +529,28 @@ app.delete('/api/empresa/documentos/:id', verificarToken, async (req, res) => {
 // ==========================================
 //   ENDPOINT PARA MAPEAR DEPARTAMENTOS
 // ==========================================
-// =======================================================
-// ENDPOINT CORREGIDO: Cargar desde la tabla departamentos
-// =======================================================
 app.get('/api/admin/departamentos', verificarToken, async (req, res) => {
     try {
-        // Consultamos directamente la tabla departamentos ordenados alfabéticamente
-        // Nota: Asegúrate de que tu columna se llame 'nombre' (o cámbiala por el nombre exacto de tu columna)
-        const result = await pool.query('SELECT nombre FROM departamentos ORDER BY nombre ASC');
+        // Consultamos toda la tabla departamentos
+        const result = await pool.query('SELECT * FROM departamentos');
         
-        // Mapeamos el resultado para que mantenga la estructura exacta que espera tu frontend ({ departamento: '...' })
-        const departamentosMapeados = result.rows.map(row => ({
-            departamento: row.nombre.toUpperCase() // Lo aseguramos en mayúsculas para mantener consistencia
-        }));
+        if (result.rows.length === 0) {
+            console.log("⚠️ La tabla departamentos está vacía en la Base de Datos.");
+            return res.json([]);
+        }
+
+        // Mapeamos dinámicamente buscando columnas comunes como 'nombre' o 'departamento'
+        const departamentosMapeados = result.rows.map(row => {
+            const nombreDep = row.nombre || row.departamento || row.nombre_dep || Object.values(row)[1] || '';
+            return {
+                departamento: String(nombreDep).toUpperCase().trim()
+            };
+        }).filter(d => d.departamento !== ''); // Filtramos valores vacíos
 
         res.json(departamentosMapeados);
     } catch (err) {
-        console.error("❌ Error al obtener de la tabla departamentos:", err);
-        res.status(500).json({ error: 'Error interno del servidor: ' + err.message });
+        console.error("❌ Error crítico en tabla departamentos:", err);
+        res.status(500).json({ error: 'Error interno de base de datos: ' + err.message });
     }
 });
 
