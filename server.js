@@ -524,6 +524,68 @@ app.delete('/api/empresa/documentos/:id', verificarToken, async (req, res) => {
     }
 });
 
+//AHORA SI VAMOS CON LO DE LOS ADMINS
+// ==========================================
+//   RUTAS DE PERMISOS ESPECIALES (ADMIN)
+// ==========================================
+
+--
+// 1. Obtener lista de departamentos para el formulario
+app.get('/api/admin/departamentos', verificarToken, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM departamentos ORDER BY nombre ASC');
+        res.json(result.rows);
+    } catch (err) {
+        res.status(500).json({ error: 'Error al obtener departamentos: ' + err.message });
+    }
+});
+
+// 2. Registrar usuario de permisos especiales en la tabla 'usuarios'
+app.post('/api/admin/crear-permiso-especial', verificarToken, upload.single('foto'), async (req, res) => {
+    // Restricción estricta de seguridad: solo admin real
+    if (req.user.rol !== 'admin') {
+        return res.status(403).json({ error: 'Solo el administrador general puede otorgar permisos especiales.' });
+    }
+
+    const { username, cedula, nombre_completo, correo, celular, departamento_id, rol } = req.body;
+    const foto_url = req.file ? req.file.path : null;
+
+    // Validaciones de negocio robustas
+    if (!username || !cedula || !nombre_completo || !rol) {
+        return res.status(400).json({ error: 'Faltan campos mandatorios (Username, Cédula, Nombre, Rol).' });
+    }
+    if (cedula.length !== 10) {
+        return res.status(400).json({ error: 'La cédula debe contener exactamente 10 dígitos.' });
+    }
+    if (correo && !esCorreoValido(correo)) {
+        return res.status(400).json({ error: 'El correo electrónico ingresado no pertenece a un dominio permitido.' });
+    }
+
+    try {
+        const query = `
+            INSERT INTO usuarios (username, cedula, nombre_completo, correo, celular, rol, departamento_id, foto_url)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING id, username, rol
+        `;
+        const values = [
+            username.toLowerCase().trim(), 
+            cedula.trim(), 
+            nombre_completo.trim(), 
+            correo ? correo.trim() : null, 
+            celular ? celular.trim() : null, 
+            rol.toLowerCase().trim(), 
+            departamento_id ? parseInt(departamento_id) : null, 
+            foto_url
+        ];
+
+        const result = await pool.query(query, values);
+        res.json({ message: 'Ok', usuario: result.rows[0] });
+
+    } catch (err) {
+        console.error('❌ Error al crear usuario especial:', err);
+        res.status(500).json({ error: 'Error al guardar el usuario corporativo. Verifique que el username o cédula no estén duplicados.' });
+    }
+});
 
 
 const PORT = process.env.PORT || 3000;
