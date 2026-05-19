@@ -529,26 +529,24 @@ app.delete('/api/empresa/documentos/:id', verificarToken, async (req, res) => {
 // ==========================================
 //   ENDPOINT PARA MAPEAR DEPARTAMENTOS
 // ==========================================
+// =======================================================
+// ENDPOINT CORREGIDO: Cargar desde la tabla departamentos
+// =======================================================
 app.get('/api/admin/departamentos', verificarToken, async (req, res) => {
     try {
-        // Consultamos los departamentos existentes en la tabla nomina
-        const result = await pool.query(
-            "SELECT DISTINCT departamento FROM nomina WHERE departamento IS NOT NULL AND departamento != '' ORDER BY departamento ASC"
-        );
+        // Consultamos directamente la tabla departamentos ordenados alfabéticamente
+        // Nota: Asegúrate de que tu columna se llame 'nombre' (o cámbiala por el nombre exacto de tu columna)
+        const result = await pool.query('SELECT nombre FROM departamentos ORDER BY nombre ASC');
         
-        // Si no hay departamentos registrados en la tabla aún, enviamos por defecto los principales de Isertel
-        if (result.rows.length === 0) {
-            return res.json([
-                { departamento: 'TALENTO HUMANO' },
-                { departamento: 'OPERACIONES' },
-                { departamento: 'TECNOLOGÍA' }
-            ]);
-        }
-        
-        res.json(result.rows);
+        // Mapeamos el resultado para que mantenga la estructura exacta que espera tu frontend ({ departamento: '...' })
+        const departamentosMapeados = result.rows.map(row => ({
+            departamento: row.nombre.toUpperCase() // Lo aseguramos en mayúsculas para mantener consistencia
+        }));
+
+        res.json(departamentosMapeados);
     } catch (err) {
-        console.error("❌ Error al obtener departamentos:", err);
-        res.status(500).json({ error: 'Error interno: ' + err.message });
+        console.error("❌ Error al obtener de la tabla departamentos:", err);
+        res.status(500).json({ error: 'Error interno del servidor: ' + err.message });
     }
 });
 
