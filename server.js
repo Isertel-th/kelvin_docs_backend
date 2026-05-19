@@ -529,31 +529,18 @@ app.delete('/api/empresa/documentos/:id', verificarToken, async (req, res) => {
 // ==========================================
 //   ENDPOINT PARA MAPEAR DEPARTAMENTOS
 // ==========================================
-app.get('/api/admin/departamentos', verificarToken, async (req, res) => {
+// Endpoint para obtener la lista de departamentos
+// Asegúrate de que esta ruta devuelva los campos correctos
+app.get('/admin/departamentos', async (req, res) => {
     try {
-        // Consultamos toda la tabla departamentos
-        const result = await pool.query('SELECT * FROM departamentos');
-        
-        if (result.rows.length === 0) {
-            console.log("⚠️ La tabla departamentos está vacía en la Base de Datos.");
-            return res.json([]);
-        }
-
-        // Mapeamos dinámicamente buscando columnas comunes como 'nombre' o 'departamento'
-        const departamentosMapeados = result.rows.map(row => {
-            const nombreDep = row.nombre || row.departamento || row.nombre_dep || Object.values(row)[1] || '';
-            return {
-                departamento: String(nombreDep).toUpperCase().trim()
-            };
-        }).filter(d => d.departamento !== ''); // Filtramos valores vacíos
-
-        res.json(departamentosMapeados);
+        // Ajusta los nombres de columna: id y nombre
+        const result = await pool.query('SELECT id, nombre FROM departamentos ORDER BY nombre ASC');
+        res.json(result.rows);
     } catch (err) {
-        console.error("❌ Error crítico en tabla departamentos:", err);
-        res.status(500).json({ error: 'Error interno de base de datos: ' + err.message });
+        console.error('❌ Error DB departamentos:', err);
+        res.status(500).json({ error: 'Error al cargar departamentos' });
     }
 });
-
 
 
 
