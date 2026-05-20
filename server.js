@@ -525,5 +525,52 @@ app.delete('/api/empresa/documentos/:id', verificarToken, async (req, res) => {
 
 
 
+
+// Endpoint para registrar un nuevo usuario (Solo Admin)
+app.post('/api/usuarios', verificarToken, storage.single('foto'), async (req, res) => {
+    // Validar que el rol sea admin
+    if (req.user.rol !== 'admin') {
+        return res.status(403).json({ error: 'Acción restringida. Solo el Administrador puede registrar usuarios.' });
+    }
+
+    const { nombre_completo, cedula, correo, celular, departamento, rol_asignado } = req.body;
+
+    // Validaciones básicas
+    if (!nombre_completo || !cedula || !correo || !rol_asignado) {
+        return res.status(400).json({ error: 'Faltan campos obligatorios (Nombre, Cédula, Correo, Rol).' });
+    }
+
+    // Obtener la URL de la foto de Cloudinary si se subió una
+    const foto_url = req.file ? req.file.path : 'https://res.cloudinary.com/demo/image/upload/v1312461204/sample.jpg'; // URL por defecto si no sube foto
+
+    // Definir el username (por ejemplo, el correo o la cédula)
+    const username = correo.split('@')[0]; 
+
+    try {
+        const query = `
+            INSERT INTO usuarios 
+            (username, cedula, rol, nombre_completo, correo, celular, foto_url, departamento_id) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8) 
+            RETURNING id, username
+        `;
+        const values = [username, cedula, rol_asignado, nombre_completo, correo, celular, foto_url, departamento];
+        
+        const result = await pool.query(query, values);
+        
+        res.status(201).json({ 
+            message: 'Usuario registrado con éxito', 
+            usuario: result.rows[0] 
+        });
+
+    } catch (err) {
+        console.error("Error al registrar usuario:", err);
+        if (err.code === '23505') { // Error de llave duplicada en Postgres
+            return res.status(400).json({ error: 'La cédula o el correo ya se encuentran registrados.' });
+        }
+        res.status(500).json({ error: 'Error interno del servidor al guardar el usuario: ' + err.message });
+    }
+});
+
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
