@@ -574,14 +574,20 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
 // ==========================================
 // NUEVA RUTA: Obtener lista de departamentos
 // ==========================================
+
+// ==========================================
+// RUTA PÚBLICA: Obtener lista de departamentos
+// ==========================================
 app.get('/departamentos', async (req, res) => {
     try {
-        // Traemos el id y el nombre de todos los departamentos
+        // Consultamos directamente id y nombre de tu tabla
         const result = await pool.query('SELECT id, nombre FROM departamentos ORDER BY nombre ASC');
+        
+        // Enviamos la lista al frontend
         res.json(result.rows);
     } catch (err) {
-        console.error("Error al obtener departamentos:", err);
-        res.status(500).json({ error: 'Error del servidor al cargar los departamentos' });
+        console.error("❌ Error en el servidor al consultar departamentos:", err);
+        res.status(500).json({ error: 'Error interno del servidor al cargar departamentos' });
     }
 });
 
