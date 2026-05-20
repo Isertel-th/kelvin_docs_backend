@@ -532,6 +532,7 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
         return res.status(403).json({ error: 'Acción restringida. Solo el Administrador puede registrar usuarios.' });
     }
 
+    // "departamento" aquí recibirá el string del nombre (ej: "Sistemas") enviado desde panel.html
     const { nombre_completo, cedula, correo, celular, departamento, rol_asignado } = req.body;
 
     // Validaciones básicas
@@ -546,12 +547,16 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
     const username = correo.split('@')[0]; 
 
     try {
+        // CAMBIO AQUÍ: Si cambiaste la columna a tipo texto, es buena práctica cambiarle el nombre 
+        // en la BD a "departamento". Si la dejas como "departamento_id", igual funcionará si es VARCHAR/TEXT.
         const query = `
             INSERT INTO usuarios 
             (username, cedula, rol, nombre_completo, correo, celular, foto_url, departamento_id) 
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) 
             RETURNING id, username
         `;
+        
+        // El parámetro $8 (departamento) ahora llevará el string (ej: "Contabilidad") gracias al cambio que hicimos en panel.html
         const values = [username, cedula, rol_asignado, nombre_completo, correo, celular, foto_url, departamento];
         
         const result = await pool.query(query, values);
