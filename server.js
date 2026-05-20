@@ -532,12 +532,36 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
         return res.status(403).json({ error: 'Acción restringida. Solo el Administrador puede registrar usuarios.' });
     }
 
-    // "departamento" contiene la cadena de texto (ej: "Financiero") enviada desde el frontend
-    const { nombre_completo, cedula, correo, celular, departamento, rol_asignado } = req.body;
+    let { nombre_completo, cedula, correo, celular, departamento, rol_asignado } = req.body;
 
-    // Validaciones básicas
-    if (!nombre_completo || !cedula || !correo || !rol_asignado) {
-        return res.status(400).json({ error: 'Faltan campos obligatorios (Nombre, Cédula, Correo, Rol).' });
+    // 1. VALIDACIÓN: Ahora todos los campos sin excepción son estrictamente obligatorios
+    if (!nombre_completo || !cedula || !correo || !celular || !departamento || !rol_asignado) {
+        return res.status(400).json({ error: 'Todos los campos son obligatorios (Nombre, Cédula, Celular, Correo, Departamento y Rol).' });
+    }
+
+    // 2. CORRECCIÓN DE FORMATO: Forzar que cada palabra empiece con Mayúscula
+    nombre_completo = nombre_completo
+        .trim()
+        .split(/\s+/) // Separa por cualquier cantidad de espacios
+        .map(palabra => palabra.charAt(0).toUpperCase() + palabra.slice(1).toLowerCase())
+        .join(' ');
+
+    // 3. VALIDACIÓN: Cédula y Celular (Solo números enteros, sin decimales, exactamente 10 dígitos)
+    const regexSoloNumeros = /^\d{10}$/;
+    if (!regexSoloNumeros.test(cedula.trim())) {
+        return res.status(400).json({ error: 'La cédula de identidad debe contener exactamente 10 dígitos numéricos enteros.' });
+    }
+    if (!regexSoloNumeros.test(celular.trim())) {
+        return res.status(400).json({ error: 'El número de celular debe contener exactamente 10 dígitos numéricos enteros.' });
+    }
+
+    // 4. VALIDACIÓN: Filtro estricto de dominios de correos autorizados
+    correo = correo.trim().toLowerCase();
+    const dominiosPermitidos = ['gmail.com', 'hotmail.com', 'outlook.com', 'outlook.es'];
+    const correoDominio = correo.split('@')[1];
+
+    if (!correo.includes('@') || !dominiosPermitidos.includes(correoDominio)) {
+        return res.status(400).json({ error: 'El correo electrónico no es válido o no pertenece a un dominio permitido (Gmail, Hotmail, Outlook).' });
     }
 
     // Obtener la URL de la foto de Cloudinary si se subió una
@@ -546,18 +570,30 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
     // Definir el username
     const username = correo.split('@')[0]; 
 
+    // 5. FECHA DE INGRESO: Capturar la fecha y hora actual del momento del registro
+    const fecha_ingreso = new Date();
+
     try {
-        // CAMBIOS AQUÍ: 
-        // 1. Cambiamos "departamento_id" por "departamento" ya que renombraste la columna en Postgres.
+        // Añadimos "fecha_ingreso" y el marcador $9 al script SQL
         const query = `
             INSERT INTO usuarios 
-            (username, cedula, rol, nombre_completo, correo, celular, foto_url, departamento) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8) 
-            RETURNING id, username
+            (username, cedula, rol, nombre_completo, correo, celular, foto_url, departamento, fecha_ingreso) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
+            RETURNING id, username, fecha_ingreso
         `;
         
-        // 2. El parámetro $8 (la variable departamento) ahora guarda directamente el texto en la BD
-        const values = [username, cedula, rol_asignado, nombre_completo, correo, celular, foto_url, departamento];
+        // El parámetro $9 lleva la fecha actual procesada
+        const values = [
+            username, 
+            cedula.trim(), 
+            rol_asignado, 
+            nombre_completo, 
+            correo, 
+            celular.trim(), 
+            foto_url, 
+            departamento, 
+            fecha_ingreso
+        ];
         
         const result = await pool.query(query, values);
         
