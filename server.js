@@ -70,27 +70,28 @@ const permisoAdminDoc = (req, res, next) => {
 // --- RUTAS ---
 
 app.post('/api/login', async (req, res) => {
-    const { username, password } = req.body;
+    // El campo del formulario sigue llegando como 'username', pero adentro lo compararemos con la columna 'correo'
+    const { username, password } = req.body; 
     try {
-        // 1. Buscar en la tabla de Administradores / Usuarios del sistema
-        let result = await pool.query('SELECT * FROM usuarios WHERE username = $1', [username]);
+        // 1. Buscar en la tabla de Usuarios usando la columna CORREO
+        let result = await pool.query('SELECT * FROM usuarios WHERE correo = $1', [username]);
         let user = result.rows[0];
         let esPasswordCorrecto = false;
 
         if (user) {
-            // Comparación directa en texto plano (tal cual está en la base de datos)
+            // Comparación directa en texto plano usando tu nueva columna 'contrasenia'
             esPasswordCorrecto = (password === user.contrasenia);
         } else {
-            // 2. Si no está en usuarios, buscar en la tabla de Nomina (Empleados)
+            // 2. Si no es un usuario administrador/gestor, buscar en la tabla de Nomina (Empleados)
+            // Aquí se mantiene buscando por username (que suele ser el alias o la cédula del empleado)
             result = await pool.query('SELECT * FROM nomina WHERE username = $1', [username]);
             user = result.rows[0];
             if (user) {
-                // Para empleados de nómina, se mantiene que su contraseña es la cédula
+                // Para empleados de nómina, su clave sigue siendo la cédula
                 esPasswordCorrecto = (password === user.cedula);
             }
         }
 
-        // Si no existe el usuario en ninguna tabla o la contraseña es incorrecta
         if (!user || !esPasswordCorrecto) {
             return res.status(400).json({ error: 'Credenciales incorrectas' });
         }
@@ -546,7 +547,6 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
 
     let { nombre_completo, cedula, correo, celular, departamento, rol_asignado, direccion, contrasenia } = req.body;
 
-    // 1. VALIDACIÓN: Comprobar campos de texto obligatorios
     if (!nombre_completo || !cedula || !correo || !celular || !departamento || !rol_asignado || !direccion || !contrasenia) {
         return res.status(400).json({ error: 'Todos los campos son obligatorios (incluyendo la Contraseña).' });
     }
@@ -557,14 +557,12 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
 
     const foto_url = req.file.path; 
 
-    // 2. CORRECCIÓN DE FORMATO: Forzar mayúsculas iniciales en el nombre
     nombre_completo = nombre_completo
         .trim()
         .split(/\s+/)
         .map(palabra => palabra.charAt(0).toUpperCase() + palabra.slice(1).toLowerCase())
         .join(' ');
 
-    // 3. VALIDACIÓN: Cédula y Celular (10 dígitos enteros)
     const regexSoloNumeros = /^\d{10}$/;
     if (!regexSoloNumeros.test(cedula.trim())) {
         return res.status(400).json({ error: 'La cédula de identidad debe contener exactamente 10 dígitos numéricos enteros.' });
@@ -573,7 +571,6 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
         return res.status(400).json({ error: 'El número de celular debe contener exactamente 10 dígitos numéricos enteros.' });
     }
 
-    // 4. VALIDACIÓN: Filtro estricto de dominios de correos
     correo = correo.trim().toLowerCase();
     const dominiosPermitidos = ['gmail.com', 'hotmail.com', 'outlook.com', 'outlook.es'];
     const correoDominio = correo.split('@')[1];
@@ -582,20 +579,18 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
         return res.status(400).json({ error: 'El correo electrónico no es válido o no pertenece a un dominio permitido (Gmail, Hotmail, Outlook).' });
     }
 
-    // 🌟 AQUÍ ESTÁ EL CAMBIO: El username ahora guarda el correo completo
-    const username = correo; 
     const fecha_ingreso = new Date();
 
     try {
+        // 🌟 EL CAMBIO AQUÍ: Eliminamos 'username' y pasamos de $11 parámetros a sólo $10 parámetros
         const query = `
             INSERT INTO usuarios 
-            (username, cedula, rol, nombre_completo, correo, celular, foto_url, departamento, fecha_ingreso, direccion, contrasenia) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) 
-            RETURNING id, username, fecha_ingreso
+            (cedula, rol, nombre_completo, correo, celular, foto_url, departamento, fecha_ingreso, direccion, contrasenia) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) 
+            RETURNING id, correo, fecha_ingreso
         `;
         
         const values = [
-            username, 
             cedula.trim(), 
             rol_asignado, 
             nombre_completo, 
@@ -605,7 +600,7 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
             departamento, 
             fecha_ingreso,
             direccion.trim(),
-            contrasenia 
+            contrasenia // <-- Ahora es el parámetro $10
         ];
         
         const result = await pool.query(query, values);
