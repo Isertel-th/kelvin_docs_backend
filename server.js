@@ -37,7 +37,8 @@ const storage = new CloudinaryStorage({
     })
 });
 
-const upload = multer({ storage });
+const upload = multer({ storage: storage });
+
 
 // --- FUNCIONES DE VALIDACIÓN ---
 const esCorreoValido = (email) => {
@@ -523,6 +524,51 @@ app.delete('/api/empresa/documentos/:id', verificarToken, async (req, res) => {
     }
 });
 
+
+// 1. Obtener lista de departamentos para el menú desplegable
+app.get('/api/departamentos', verificarToken, async (req, res) => {
+    try {
+        const query = 'SELECT id, nombre FROM departamentos ORDER BY nombre ASC';
+        const result = await pool.query(query);
+        res.json(result.rows);
+    } catch (err) {
+        res.status(500).json({ error: 'Error al obtener departamentos: ' + err.message });
+    }
+});
+
+// 2. Endpoint para registrar nuevos usuarios en nómina
+app.post('/api/nomina', verificarToken, upload.single('foto'), async (req, res) => {
+    // Protección de seguridad: Solo el rol admin puede ejecutar esto
+    if (req.user.rol !== 'admin') {
+        return res.status(403).json({ error: 'Acción restringida. Solo el Administrador puede registrar.' });
+    }
+
+    const { nombre_completo, cedula, correo, celular, departamento_id, rol } = req.body;
+    
+    // Si se subió una foto, guardamos la URL de Cloudinary; si no, queda en null
+    const foto_url = req.file ? req.file.path : null;
+    
+    // Autogeneramos datos obligatorios no solicitados en el form (username y fecha)
+    const username = correo.split('@')[0]; // Toma la primera parte del correo como username
+    const fecha_ingreso = new Date();
+
+    try {
+        const query = `
+            INSERT INTO nomina 
+            (username, cedula, rol, nombre_completo, fecha_ingreso, correo, celular, foto_url, departamento_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *
+        `;
+        const values = [
+            username, cedula, rol, nombre_completo, fecha_ingreso, correo, celular, foto_url, departamento_id
+        ];
+        
+        const result = await pool.query(query, values);
+        res.status(201).json({ message: 'Personal registrado exitosamente', empleado: result.rows[0] });
+    } catch (err) {
+        console.error("Error al registrar:", err);
+        res.status(500).json({ error: 'Error al registrar personal: ' + err.message });
+    }
+});
 
 
 const PORT = process.env.PORT || 3000;
