@@ -639,5 +639,28 @@ app.get('/api/departamentos', async (req, res) => { // <-- AQUÍ: Agregamos /api
 });
 
 
+
+// Endpoint para obtener la lista de usuarios registrados (Solo Admin)
+app.get('/api/usuarios', verificarToken, async (req, res) => {
+    if (req.user.rol !== 'admin') {
+        return res.status(403).json({ error: 'Acción restringida. Solo el Administrador puede ver esta lista.' });
+    }
+
+    try {
+        // Consultamos los campos esenciales de la tabla usuarios
+        const query = `
+            SELECT id, foto_url, nombre_completo, cedula, correo, celular, departamento, rol, fecha_ingreso 
+            FROM usuarios 
+            ORDER BY fecha_ingreso DESC
+        `;
+        const result = await pool.query(query);
+        res.json(result.rows);
+    } catch (err) {
+        console.error("❌ Error en el servidor al consultar usuarios:", err);
+        res.status(500).json({ error: 'Error interno del servidor al cargar el listado de usuarios' });
+    }
+});
+
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
