@@ -578,7 +578,7 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
 // ==========================================
 // RUTA PÚBLICA: Obtener lista de departamentos
 // ==========================================
-app.get('/departamentos', async (req, res) => {
+app.get('/api/departamentos', async (req, res) => { // <-- AQUÍ: Agregamos /api antes de /departamentos
     try {
         // Consultamos directamente id y nombre de tu tabla
         const result = await pool.query('SELECT id, nombre FROM departamentos ORDER BY nombre ASC');
