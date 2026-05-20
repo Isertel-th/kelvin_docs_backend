@@ -527,8 +527,7 @@ app.delete('/api/empresa/documentos/:id', verificarToken, async (req, res) => {
 
 
 // Endpoint para registrar un nuevo usuario (Solo Admin)
-app.post('/api/usuarios', verificarToken, storage.single('foto'), async (req, res) => {
-    // Validar que el rol sea admin
+app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res) => {
     if (req.user.rol !== 'admin') {
         return res.status(403).json({ error: 'Acción restringida. Solo el Administrador puede registrar usuarios.' });
     }
