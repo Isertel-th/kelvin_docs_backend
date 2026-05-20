@@ -5,6 +5,7 @@ const cors = require('cors');
 const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
+const bcrypt = require('bcrypt'); // <-- 1. IMPORTAR BCRYPT
 require('dotenv').config();
 
 const app = express();
@@ -72,22 +73,34 @@ const permisoAdminDoc = (req, res, next) => {
 app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
     try {
-        // 1. Buscar en la tabla de Administradores
+        // 1. Buscar en la tabla de Administradores / Usuarios del sistema
         let result = await pool.query('SELECT * FROM usuarios WHERE username = $1', [username]);
-        
-        // 2. Si no es admin, buscar en la tabla de Nomina (Empleados)
-        if (result.rows.length === 0) {
+        let user = result.rows[0];
+        let esPasswordCorrecto = false;
+
+        if (user) {
+            // Si está en la tabla 'usuarios', validamos contra la columna 'contrasenia' encriptada
+            esPasswordCorrecto = await bcrypt.compare(password, user.contrasenia);
+        } else {
+            // 2. Si no está en usuarios, buscar en la tabla de Nomina (Empleados)
             result = await pool.query('SELECT * FROM nomina WHERE username = $1', [username]);
+            user = result.rows[0];
+            if (user) {
+                // Para empleados de nómina, se mantiene la condición de que su contraseña es la cédula
+                esPasswordCorrecto = (password === user.cedula);
+            }
         }
 
-        if (result.rows.length === 0 || password !== result.rows[0].cedula) {
+        // Si no existe el usuario en ninguna tabla o la contraseña es incorrecta
+        if (!user || !esPasswordCorrecto) {
             return res.status(400).json({ error: 'Credenciales incorrectas' });
         }
 
-        const user = result.rows[0];
         const token = jwt.sign({ id: user.id, rol: user.rol }, process.env.JWT_SECRET, { expiresIn: '8h' });
         res.json({ token, rol: user.rol, nombre: user.nombre_completo });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { 
+        res.status(500).json({ error: err.message }); 
+    }
 });
 
 
@@ -532,12 +545,12 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
         return res.status(403).json({ error: 'Acción restringida. Solo el Administrador puede registrar usuarios.' });
     }
 
-    // Recibimos "direccion" desde el req.body
-    let { nombre_completo, cedula, correo, celular, departamento, rol_asignado, direccion } = req.body;
+    // Recibimos también "contrasenia" desde el req.body
+    let { nombre_completo, cedula, correo, celular, departamento, rol_asignado, direccion, contrasenia } = req.body;
 
-    // 1. VALIDACIÓN: Comprobar campos de texto obligatorios (incluyendo dirección)
-    if (!nombre_completo || !cedula || !correo || !celular || !departamento || !rol_asignado || !direccion) {
-        return res.status(400).json({ error: 'Todos los campos son obligatorios (Nombre, Cédula, Celular, Correo, Dirección, Departamento y Rol).' });
+    // 1. VALIDACIÓN: Comprobar campos de texto obligatorios (incluyendo dirección y contraseña)
+    if (!nombre_completo || !cedula || !correo || !celular || !departamento || !rol_asignado || !direccion || !contrasenia) {
+        return res.status(400).json({ error: 'Todos los campos son obligatorios (incluyendo la Contraseña).' });
     }
 
     // Comprobar que se haya subido un archivo de imagen
@@ -579,15 +592,19 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
     const fecha_ingreso = new Date();
 
     try {
-        // Añadimos la columna "direccion" y el marcador $10 al script SQL
+        // Encriptar la contraseña recibida antes de guardarla
+        const salt = await bcrypt.genSalt(10);
+        const contraseniaCifrada = await bcrypt.hash(contrasenia, salt);
+
+        // Añadimos la columna "contrasenia" y el marcador $11 al script SQL
         const query = `
             INSERT INTO usuarios 
-            (username, cedula, rol, nombre_completo, correo, celular, foto_url, departamento, fecha_ingreso, direccion) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) 
+            (username, cedula, rol, nombre_completo, correo, celular, foto_url, departamento, fecha_ingreso, direccion, contrasenia) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) 
             RETURNING id, username, fecha_ingreso
         `;
         
-        // Pasamos direccion.trim() en la posición 10 del array
+        // Pasamos la contraseniaCifrada en la posición 11 del array
         const values = [
             username, 
             cedula.trim(), 
@@ -598,7 +615,8 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
             foto_url, 
             departamento, 
             fecha_ingreso,
-            direccion.trim() // <-- Parámetro $10
+            direccion.trim(),
+            contraseniaCifrada // <-- Parámetro $11
         ];
         
         const result = await pool.query(query, values);
