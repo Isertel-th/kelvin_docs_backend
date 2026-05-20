@@ -545,9 +545,11 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
         return res.status(403).json({ error: 'Acción restringida. Solo el Administrador puede registrar usuarios.' });
     }
 
-    let { nombre_completo, cedula, correo, celular, departamento, rol_asignado, direccion, contrasenia } = req.body;
+    // 1. CORRECCIÓN: Quitamos 'rol_asignado' de req.body porque ya no lo necesitamos validar individualmente
+    let { nombre_completo, cedula, correo, celular, departamento, direccion, contrasenia } = req.body;
 
-    if (!nombre_completo || !cedula || !correo || !celular || !departamento || !rol_asignado || !direccion || !contrasenia) {
+    // 2. CORRECCIÓN: Quitamos '!rol_asignado' de la validación
+    if (!nombre_completo || !cedula || !correo || !celular || !departamento || !direccion || !contrasenia) {
         return res.status(400).json({ error: 'Todos los campos son obligatorios (incluyendo la Contraseña).' });
     }
 
@@ -582,7 +584,6 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
     const fecha_ingreso = new Date();
 
     try {
-        // 🌟 EL CAMBIO AQUÍ: Eliminamos 'username' y pasamos de $11 parámetros a sólo $10 parámetros
         const query = `
             INSERT INTO usuarios 
             (cedula, rol, nombre_completo, correo, celular, foto_url, departamento, fecha_ingreso, direccion, contrasenia) 
@@ -592,7 +593,7 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
         
         const values = [
             cedula.trim(), 
-            rol_asignado, 
+            departamento, // 3. 🌟 EL CAMBIO CLAVE AQUÍ: En lugar de 'rol_asignado', mapeamos directo el 'departamento' a la columna 'rol'
             nombre_completo, 
             correo, 
             celular.trim(), 
@@ -600,7 +601,7 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
             departamento, 
             fecha_ingreso,
             direccion.trim(),
-            contrasenia // <-- Ahora es el parámetro $10
+            contrasenia 
         ];
         
         const result = await pool.query(query, values);
