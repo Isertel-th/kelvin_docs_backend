@@ -582,11 +582,11 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
         return res.status(400).json({ error: 'El correo electrónico no es válido o no pertenece a un dominio permitido (Gmail, Hotmail, Outlook).' });
     }
 
-    const username = correo.split('@')[0]; 
+    // 🌟 AQUÍ ESTÁ EL CAMBIO: El username ahora guarda el correo completo
+    const username = correo; 
     const fecha_ingreso = new Date();
 
     try {
-        // Ocupamos el marcador $11 directamente con la contraseña sin encriptar
         const query = `
             INSERT INTO usuarios 
             (username, cedula, rol, nombre_completo, correo, celular, foto_url, departamento, fecha_ingreso, direccion, contrasenia) 
@@ -605,7 +605,7 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
             departamento, 
             fecha_ingreso,
             direccion.trim(),
-            contrasenia // <-- Se envía el texto plano directamente al parámetro $11
+            contrasenia 
         ];
         
         const result = await pool.query(query, values);
