@@ -461,10 +461,9 @@ app.delete('/api/kelvin/documentos/:id', verificarToken, permisoAdminDoc, async 
 
 // 1. Subir documento institucional
 // 1. Subir documento institucional (Solo PDFs)
-app.post('/api/empresa/documentos', verificarToken, async (req, res) => {
-    // Restricción estricta: Solo el admin puede subir archivos corporativos
+app.post('/api/empresa/documentos', verificarToken, upload.single('archivo'), async (req, res) => {
     if (req.user.rol !== 'admin') {
-        return res.status(403).json({ error: 'Acción denegada. Solo el Administrador puede subir documentos.' });
+        return res.status(403).json({ error: 'No tienes permisos para subir documentos de empresa' });
     }
 
     const { tipo_documento } = req.body;
@@ -506,8 +505,6 @@ app.get('/api/empresa/documentos', verificarToken, async (req, res) => {
 });
 
 // 3. Eliminar un documento institucional
-// 3. Eliminar un documento institucional
-// 3. Eliminar un documento institucional de la empresa
 app.delete('/api/empresa/documentos/:id', verificarToken, async (req, res) => {
     if (req.user.rol !== 'admin') {
         return res.status(403).json({ error: 'Acción restringida. Solo el Administrador puede eliminar.' });
@@ -522,72 +519,11 @@ app.delete('/api/empresa/documentos/:id', verificarToken, async (req, res) => {
             res.status(404).json({ error: 'Documento no encontrado' });
         }
     } catch (err) {
-        res.status(500).json({ error: 'Error al eliminar el documento: ' + err.message });
+        res.status(500).json({ error: 'Error al eliminar de la base de datos: ' + err.message });
     }
 });
 
 
-
-//PERMISOOOOOOOOOOOOS
-// ==========================================
-//   ENDPOINT PARA MAPEAR DEPARTAMENTOS
-// ==========================================
-// Corregido: Se añade '/api' para mantener el estándar con las otras rutas
-app.get('/api/admin/departamentos', async (req, res) => {
-    try {
-        const result = await pool.query('SELECT id, nombre FROM departamentos ORDER BY nombre ASC');
-        res.json(result.rows);
-    } catch (err) {
-        console.error('❌ Error DB departamentos:', err);
-        res.status(500).json({ error: 'Error al cargar departamentos' });
-    }
-});
-
-// Registrar usuario (Esta ruta la tenías bien, la mantenemos igual)
-app.post('/api/admin/crear-permiso-especial', verificarToken, upload.single('foto'), async (req, res) => {
-    if (req.user.rol !== 'admin') {
-        return res.status(403).json({ error: 'Solo el administrador general puede otorgar permisos especiales.' });
-    }
-
-    const { username, cedula, nombre_completo, correo, celular, departamento_id, rol } = req.body;
-    const foto_url = req.file ? req.file.path : null;
-
-    if (!username || !cedula || !nombre_completo || !rol) {
-        return res.status(400).json({ error: 'Faltan campos mandatorios (Username, Cédula, Nombre, Rol).' });
-    }
-    if (cedula.length !== 10) {
-        return res.status(400).json({ error: 'La cédula debe contener exactamente 10 dígitos.' });
-    }
-    // Asumiendo que esCorreoValido ya existe en tu entorno
-    if (correo && !esCorreoValido(correo)) {
-        return res.status(400).json({ error: 'El correo electrónico ingresado no pertenece a un dominio permitido.' });
-    }
-
-    try {
-        const query = `
-            INSERT INTO usuarios (username, cedula, nombre_completo, correo, celular, rol, departamento_id, foto_url)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            RETURNING id, username, rol
-        `;
-        const values = [
-            username.toLowerCase().trim(), 
-            cedula.trim(), 
-            nombre_completo.trim(), 
-            correo ? correo.trim() : null, 
-            celular ? celular.trim() : null, 
-            rol.toLowerCase().trim(), 
-            departamento_id ? parseInt(departamento_id) : null, 
-            foto_url
-        ];
-
-        const result = await pool.query(query, values);
-        res.json({ message: 'Ok', usuario: result.rows[0] });
-
-    } catch (err) {
-        console.error('❌ Error al crear usuario especial:', err);
-        res.status(500).json({ error: 'Error al guardar el usuario. Verifique duplicados.' });
-    }
-});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
