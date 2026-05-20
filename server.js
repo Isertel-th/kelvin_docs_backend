@@ -532,22 +532,22 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
         return res.status(403).json({ error: 'Acción restringida. Solo el Administrador puede registrar usuarios.' });
     }
 
-    let { nombre_completo, cedula, correo, celular, departamento, rol_asignado } = req.body;
+    // Recibimos "direccion" desde el req.body
+    let { nombre_completo, cedula, correo, celular, departamento, rol_asignado, direccion } = req.body;
 
-    // 1. VALIDACIÓN: Comprobar campos de texto obligatorios
-    if (!nombre_completo || !cedula || !correo || !celular || !departamento || !rol_asignado) {
-        return res.status(400).json({ error: 'Todos los campos de texto son obligatorios (Nombre, Cédula, Celular, Correo, Departamento y Rol).' });
+    // 1. VALIDACIÓN: Comprobar campos de texto obligatorios (incluyendo dirección)
+    if (!nombre_completo || !cedula || !correo || !celular || !departamento || !rol_asignado || !direccion) {
+        return res.status(400).json({ error: 'Todos los campos son obligatorios (Nombre, Cédula, Celular, Correo, Dirección, Departamento y Rol).' });
     }
 
-    // NUEVA VALIDACIÓN: Comprobar que físicamente se haya subido un archivo de imagen
+    // Comprobar que se haya subido un archivo de imagen
     if (!req.file) {
         return res.status(400).json({ error: 'La foto de perfil es obligatoria. Por favor, suba una imagen.' });
     }
 
-    // Como req.file existe con total certeza, asignamos directamente su ruta en Cloudinary
     const foto_url = req.file.path; 
 
-    // 2. CORRECCIÓN DE FORMATO: Forzar mayúsculas iniciales
+    // 2. CORRECCIÓN DE FORMATO: Forzar mayúsculas iniciales en el nombre
     nombre_completo = nombre_completo
         .trim()
         .split(/\s+/)
@@ -579,13 +579,15 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
     const fecha_ingreso = new Date();
 
     try {
+        // Añadimos la columna "direccion" y el marcador $10 al script SQL
         const query = `
             INSERT INTO usuarios 
-            (username, cedula, rol, nombre_completo, correo, celular, foto_url, departamento, fecha_ingreso) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
+            (username, cedula, rol, nombre_completo, correo, celular, foto_url, departamento, fecha_ingreso, direccion) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) 
             RETURNING id, username, fecha_ingreso
         `;
         
+        // Pasamos direccion.trim() en la posición 10 del array
         const values = [
             username, 
             cedula.trim(), 
@@ -593,9 +595,10 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
             nombre_completo, 
             correo, 
             celular.trim(), 
-            foto_url, // URL real de Cloudinary
+            foto_url, 
             departamento, 
-            fecha_ingreso
+            fecha_ingreso,
+            direccion.trim() // <-- Parámetro $10
         ];
         
         const result = await pool.query(query, values);
