@@ -532,7 +532,7 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
         return res.status(403).json({ error: 'Acción restringida. Solo el Administrador puede registrar usuarios.' });
     }
 
-    // "departamento" aquí recibirá el string del nombre (ej: "Sistemas") enviado desde panel.html
+    // "departamento" contiene la cadena de texto (ej: "Financiero") enviada desde el frontend
     const { nombre_completo, cedula, correo, celular, departamento, rol_asignado } = req.body;
 
     // Validaciones básicas
@@ -541,22 +541,22 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
     }
 
     // Obtener la URL de la foto de Cloudinary si se subió una
-    const foto_url = req.file ? req.file.path : 'https://res.cloudinary.com/demo/image/upload/v1312461204/sample.jpg'; // URL por defecto si no sube foto
+    const foto_url = req.file ? req.file.path : 'https://res.cloudinary.com/demo/image/upload/v1312461204/sample.jpg'; 
 
-    // Definir el username (por ejemplo, el correo o la cédula)
+    // Definir el username
     const username = correo.split('@')[0]; 
 
     try {
-        // CAMBIO AQUÍ: Si cambiaste la columna a tipo texto, es buena práctica cambiarle el nombre 
-        // en la BD a "departamento". Si la dejas como "departamento_id", igual funcionará si es VARCHAR/TEXT.
+        // CAMBIOS AQUÍ: 
+        // 1. Cambiamos "departamento_id" por "departamento" ya que renombraste la columna en Postgres.
         const query = `
             INSERT INTO usuarios 
-            (username, cedula, rol, nombre_completo, correo, celular, foto_url, departamento_id) 
+            (username, cedula, rol, nombre_completo, correo, celular, foto_url, departamento) 
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) 
             RETURNING id, username
         `;
         
-        // El parámetro $8 (departamento) ahora llevará el string (ej: "Contabilidad") gracias al cambio que hicimos en panel.html
+        // 2. El parámetro $8 (la variable departamento) ahora guarda directamente el texto en la BD
         const values = [username, cedula, rol_asignado, nombre_completo, correo, celular, foto_url, departamento];
         
         const result = await pool.query(query, values);
@@ -568,13 +568,12 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
 
     } catch (err) {
         console.error("Error al registrar usuario:", err);
-        if (err.code === '23505') { // Error de llave duplicada en Postgres
+        if (err.code === '23505') { 
             return res.status(400).json({ error: 'La cédula o el correo ya se encuentran registrados.' });
         }
         res.status(500).json({ error: 'Error interno del servidor al guardar el usuario: ' + err.message });
     }
 });
-
 
 // ==========================================
 // NUEVA RUTA: Obtener lista de departamentos
