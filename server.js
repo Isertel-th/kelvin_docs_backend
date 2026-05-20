@@ -524,7 +524,7 @@ app.delete('/api/empresa/documentos/:id', verificarToken, async (req, res) => {
 });
 
 
-
+//CREADOR DE ADMINS
 
 // Endpoint para registrar un nuevo usuario (Solo Admin)
 app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res) => {
@@ -567,6 +567,21 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
             return res.status(400).json({ error: 'La cédula o el correo ya se encuentran registrados.' });
         }
         res.status(500).json({ error: 'Error interno del servidor al guardar el usuario: ' + err.message });
+    }
+});
+
+
+// ==========================================
+// NUEVA RUTA: Obtener lista de departamentos
+// ==========================================
+app.get('/departamentos', async (req, res) => {
+    try {
+        // Traemos el id y el nombre de todos los departamentos
+        const result = await pool.query('SELECT id, nombre FROM departamentos ORDER BY nombre ASC');
+        res.json(result.rows);
+    } catch (err) {
+        console.error("Error al obtener departamentos:", err);
+        res.status(500).json({ error: 'Error del servidor al cargar los departamentos' });
     }
 });
 
