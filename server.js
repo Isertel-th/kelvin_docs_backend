@@ -5,7 +5,6 @@ const cors = require('cors');
 const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
-const bcrypt = require('bcrypt'); // <-- 1. IMPORTAR BCRYPT
 require('dotenv').config();
 
 const app = express();
@@ -79,14 +78,14 @@ app.post('/api/login', async (req, res) => {
         let esPasswordCorrecto = false;
 
         if (user) {
-            // Si está en la tabla 'usuarios', validamos contra la columna 'contrasenia' encriptada
-            esPasswordCorrecto = await bcrypt.compare(password, user.contrasenia);
+            // Comparación directa en texto plano (tal cual está en la base de datos)
+            esPasswordCorrecto = (password === user.contrasenia);
         } else {
             // 2. Si no está en usuarios, buscar en la tabla de Nomina (Empleados)
             result = await pool.query('SELECT * FROM nomina WHERE username = $1', [username]);
             user = result.rows[0];
             if (user) {
-                // Para empleados de nómina, se mantiene la condición de que su contraseña es la cédula
+                // Para empleados de nómina, se mantiene que su contraseña es la cédula
                 esPasswordCorrecto = (password === user.cedula);
             }
         }
@@ -545,15 +544,13 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
         return res.status(403).json({ error: 'Acción restringida. Solo el Administrador puede registrar usuarios.' });
     }
 
-    // Recibimos también "contrasenia" desde el req.body
     let { nombre_completo, cedula, correo, celular, departamento, rol_asignado, direccion, contrasenia } = req.body;
 
-    // 1. VALIDACIÓN: Comprobar campos de texto obligatorios (incluyendo dirección y contraseña)
+    // 1. VALIDACIÓN: Comprobar campos de texto obligatorios
     if (!nombre_completo || !cedula || !correo || !celular || !departamento || !rol_asignado || !direccion || !contrasenia) {
         return res.status(400).json({ error: 'Todos los campos son obligatorios (incluyendo la Contraseña).' });
     }
 
-    // Comprobar que se haya subido un archivo de imagen
     if (!req.file) {
         return res.status(400).json({ error: 'La foto de perfil es obligatoria. Por favor, suba una imagen.' });
     }
@@ -585,18 +582,11 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
         return res.status(400).json({ error: 'El correo electrónico no es válido o no pertenece a un dominio permitido (Gmail, Hotmail, Outlook).' });
     }
 
-    // Definir el username
     const username = correo.split('@')[0]; 
-
-    // 5. FECHA DE INGRESO: Capturar la fecha actual
     const fecha_ingreso = new Date();
 
     try {
-        // Encriptar la contraseña recibida antes de guardarla
-        const salt = await bcrypt.genSalt(10);
-        const contraseniaCifrada = await bcrypt.hash(contrasenia, salt);
-
-        // Añadimos la columna "contrasenia" y el marcador $11 al script SQL
+        // Ocupamos el marcador $11 directamente con la contraseña sin encriptar
         const query = `
             INSERT INTO usuarios 
             (username, cedula, rol, nombre_completo, correo, celular, foto_url, departamento, fecha_ingreso, direccion, contrasenia) 
@@ -604,7 +594,6 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
             RETURNING id, username, fecha_ingreso
         `;
         
-        // Pasamos la contraseniaCifrada en la posición 11 del array
         const values = [
             username, 
             cedula.trim(), 
@@ -616,7 +605,7 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
             departamento, 
             fecha_ingreso,
             direccion.trim(),
-            contraseniaCifrada // <-- Parámetro $11
+            contrasenia // <-- Se envía el texto plano directamente al parámetro $11
         ];
         
         const result = await pool.query(query, values);
