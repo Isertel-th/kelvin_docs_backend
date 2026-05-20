@@ -534,19 +534,27 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
 
     let { nombre_completo, cedula, correo, celular, departamento, rol_asignado } = req.body;
 
-    // 1. VALIDACIÓN: Ahora todos los campos sin excepción son estrictamente obligatorios
+    // 1. VALIDACIÓN: Comprobar campos de texto obligatorios
     if (!nombre_completo || !cedula || !correo || !celular || !departamento || !rol_asignado) {
-        return res.status(400).json({ error: 'Todos los campos son obligatorios (Nombre, Cédula, Celular, Correo, Departamento y Rol).' });
+        return res.status(400).json({ error: 'Todos los campos de texto son obligatorios (Nombre, Cédula, Celular, Correo, Departamento y Rol).' });
     }
 
-    // 2. CORRECCIÓN DE FORMATO: Forzar que cada palabra empiece con Mayúscula
+    // NUEVA VALIDACIÓN: Comprobar que físicamente se haya subido un archivo de imagen
+    if (!req.file) {
+        return res.status(400).json({ error: 'La foto de perfil es obligatoria. Por favor, suba una imagen.' });
+    }
+
+    // Como req.file existe con total certeza, asignamos directamente su ruta en Cloudinary
+    const foto_url = req.file.path; 
+
+    // 2. CORRECCIÓN DE FORMATO: Forzar mayúsculas iniciales
     nombre_completo = nombre_completo
         .trim()
-        .split(/\s+/) // Separa por cualquier cantidad de espacios
+        .split(/\s+/)
         .map(palabra => palabra.charAt(0).toUpperCase() + palabra.slice(1).toLowerCase())
         .join(' ');
 
-    // 3. VALIDACIÓN: Cédula y Celular (Solo números enteros, sin decimales, exactamente 10 dígitos)
+    // 3. VALIDACIÓN: Cédula y Celular (10 dígitos enteros)
     const regexSoloNumeros = /^\d{10}$/;
     if (!regexSoloNumeros.test(cedula.trim())) {
         return res.status(400).json({ error: 'La cédula de identidad debe contener exactamente 10 dígitos numéricos enteros.' });
@@ -555,7 +563,7 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
         return res.status(400).json({ error: 'El número de celular debe contener exactamente 10 dígitos numéricos enteros.' });
     }
 
-    // 4. VALIDACIÓN: Filtro estricto de dominios de correos autorizados
+    // 4. VALIDACIÓN: Filtro estricto de dominios de correos
     correo = correo.trim().toLowerCase();
     const dominiosPermitidos = ['gmail.com', 'hotmail.com', 'outlook.com', 'outlook.es'];
     const correoDominio = correo.split('@')[1];
@@ -564,17 +572,13 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
         return res.status(400).json({ error: 'El correo electrónico no es válido o no pertenece a un dominio permitido (Gmail, Hotmail, Outlook).' });
     }
 
-    // Obtener la URL de la foto de Cloudinary si se subió una
-    const foto_url = req.file ? req.file.path : 'https://res.cloudinary.com/demo/image/upload/v1312461204/sample.jpg'; 
-
     // Definir el username
     const username = correo.split('@')[0]; 
 
-    // 5. FECHA DE INGRESO: Capturar la fecha y hora actual del momento del registro
+    // 5. FECHA DE INGRESO: Capturar la fecha actual
     const fecha_ingreso = new Date();
 
     try {
-        // Añadimos "fecha_ingreso" y el marcador $9 al script SQL
         const query = `
             INSERT INTO usuarios 
             (username, cedula, rol, nombre_completo, correo, celular, foto_url, departamento, fecha_ingreso) 
@@ -582,7 +586,6 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
             RETURNING id, username, fecha_ingreso
         `;
         
-        // El parámetro $9 lleva la fecha actual procesada
         const values = [
             username, 
             cedula.trim(), 
@@ -590,7 +593,7 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
             nombre_completo, 
             correo, 
             celular.trim(), 
-            foto_url, 
+            foto_url, // URL real de Cloudinary
             departamento, 
             fecha_ingreso
         ];
@@ -610,7 +613,6 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
         res.status(500).json({ error: 'Error interno del servidor al guardar el usuario: ' + err.message });
     }
 });
-
 // ==========================================
 // NUEVA RUTA: Obtener lista de departamentos
 // ==========================================
