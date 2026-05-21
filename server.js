@@ -661,6 +661,77 @@ app.get('/api/usuarios', verificarToken, async (req, res) => {
     }
 });
 
+//EDITAR USUARIOS DEL ADMIN
+//OJITOOOOO
+
+app.put('/api/usuarios/:id', verificarToken, upload.single('foto'), async (req, res) => {
+    if (req.user.rol !== 'admin') {
+        return res.status(403).json({ error: 'Acción restringida. Solo el Administrador puede editar colaboradores.' });
+    }
+
+    const usuarioId = req.params.id;
+    let { nombre_completo, cedula, correo, celular, direccion, rol, contrasenia } = req.body;
+
+    if (!nombre_completo || !cedula || !correo || !celular || !direccion || !rol) {
+        return res.status(400).json({ error: 'Todos los campos base son obligatorios para guardar la edición.' });
+    }
+
+    try {
+        const usuarioExistente = await pool.query('SELECT foto_url, contrasenia FROM usuarios WHERE id = $1', [usuarioId]);
+        if (usuarioExistente.rows.length === 0) {
+            return res.status(404).json({ error: 'El usuario solicitado no existe.' });
+        }
+
+        // Manejo de la foto (si no sube una nueva, se conserva la actual)
+        let foto_url = usuarioExistente.rows[0].foto_url;
+        if (req.file) {
+            foto_url = req.file.path;
+        }
+
+        // Manejo de la contraseña (si no escribe una nueva, se conserva la existente)
+        let passwordFinal = usuarioExistente.rows[0].contrasenia;
+        if (contrasenia && contrasenia.trim() !== '') {
+            passwordFinal = contrasenia; 
+        }
+
+        const queryUpdate = `
+            UPDATE usuarios 
+            SET cedula = $1, 
+                rol = $2, 
+                nombre_completo = $3, 
+                correo = $4, 
+                celular = $5, 
+                foto_url = $6, 
+                direccion = $7, 
+                contrasenia = $8
+            WHERE id = $9
+            RETURNING id, nombre_completo, correo, rol
+        `;
+
+        const values = [
+            cedula.trim(),
+            rol.trim(), 
+            nombre_completo.trim(),
+            correo.trim().toLowerCase(),
+            celular.trim(),
+            foto_url,
+            direccion.trim(),
+            passwordFinal,
+            usuarioId
+        ];
+
+        const resultado = await pool.query(queryUpdate, values);
+        res.json({ message: 'Colaborador actualizado con éxito', usuario: resultado.rows[0] });
+
+    } catch (err) {
+        console.error("❌ Error al actualizar usuario:", err);
+        if (err.code === '23505') {
+            return res.status(400).json({ error: 'La cédula o el correo ya se encuentran asignados a otro colaborador.' });
+        }
+        res.status(500).json({ error: 'Error interno del servidor al actualizar: ' + err.message });
+    }
+});
+
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
