@@ -169,6 +169,7 @@ app.post('/api/admin/crear-usuario', verificarToken, upload.single('foto'), asyn
 
 // ENDPOINT: Modificar datos de un empleado de nómina activa
 // ENDPOINT ACTUALIZADO: Modificar datos de un colaborador (Nómina o Pasivos)
+// ENDPOINT ACTUALIZADO: Modificar datos de un colaborador (SOLO Nómina Activa)
 app.put('/api/admin/modificar-usuario/:tabla/:id', verificarToken, upload.single('foto'), async (req, res) => {
     if (req.user.rol !== 'admin') return res.status(403).json({ error: 'Solo el administrador puede modificar datos' });
     
@@ -176,8 +177,12 @@ app.put('/api/admin/modificar-usuario/:tabla/:id', verificarToken, upload.single
     const { cedula, nombre_completo, fecha_ingreso, correo, celular, direccion } = req.body;
     const nueva_foto_url = req.file ? req.file.path : null;
 
-    // Validar que solo se apunte a tablas permitidas por seguridad
-    if (tabla !== 'nomina' && tabla !== 'pasivos') {
+    // RESTRICCIÓN DE SEGURIDAD: Bloquear por completo cualquier intento sobre la tabla 'pasivos'
+    if (tabla === 'pasivos') {
+        return res.status(403).json({ error: 'Los registros de personal pasivo son históricos y no se pueden modificar.' });
+    }
+
+    if (tabla !== 'nomina') {
         return res.status(400).json({ error: 'Tabla de destino no válida' });
     }
 
@@ -195,7 +200,7 @@ app.put('/api/admin/modificar-usuario/:tabla/:id', verificarToken, upload.single
         // 2. Conservar foto actual si no se sube una nueva
         const fotoFinal = nueva_foto_url ? nueva_foto_url : existeUser.rows[0].foto_url;
 
-        // 3. Ejecutar la actualización dinámica en la tabla correspondiente
+        // 3. Ejecutar la actualización dinámica en la tabla 'nomina'
         await pool.query(
             `UPDATE ${tabla} 
              SET username = $1, cedula = $2, nombre_completo = $3, fecha_ingreso = $4, correo = $5, celular = $6, direccion = $7, foto_url = $8 
