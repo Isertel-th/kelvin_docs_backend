@@ -545,10 +545,8 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
         return res.status(403).json({ error: 'Acción restringida. Solo el Administrador puede registrar usuarios.' });
     }
 
-    // 1. CORRECCIÓN: Quitamos 'rol_asignado' de req.body porque ya no lo necesitamos validar individualmente
     let { nombre_completo, cedula, correo, celular, departamento, direccion, contrasenia } = req.body;
 
-    // 2. CORRECCIÓN: Quitamos '!rol_asignado' de la validación
     if (!nombre_completo || !cedula || !correo || !celular || !departamento || !direccion || !contrasenia) {
         return res.status(400).json({ error: 'Todos los campos son obligatorios (incluyendo la Contraseña).' });
     }
@@ -584,21 +582,22 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
     const fecha_ingreso = new Date();
 
     try {
+        // 🌟 CORRECCIÓN: Eliminamos la columna y el parámetro 'departamento' de la consulta SQL
         const query = `
             INSERT INTO usuarios 
-            (cedula, rol, nombre_completo, correo, celular, foto_url, departamento, fecha_ingreso, direccion, contrasenia) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) 
+            (cedula, rol, nombre_completo, correo, celular, foto_url, fecha_ingreso, direccion, contrasenia) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
             RETURNING id, correo, fecha_ingreso
         `;
         
+        // 🌟 CORRECCIÓN: Ahora son sólo 9 parámetros ($1 al $9)
         const values = [
             cedula.trim(), 
-            departamento, // 3. 🌟 EL CAMBIO CLAVE AQUÍ: En lugar de 'rol_asignado', mapeamos directo el 'departamento' a la columna 'rol'
+            departamento, // Se mapea directo a la columna 'rol'
             nombre_completo, 
             correo, 
             celular.trim(), 
             foto_url, 
-            departamento, 
             fecha_ingreso,
             direccion.trim(),
             contrasenia 
