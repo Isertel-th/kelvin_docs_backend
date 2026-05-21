@@ -733,5 +733,34 @@ app.put('/api/usuarios/:id', verificarToken, upload.single('foto'), async (req, 
 });
 
 
+
+// ELIMINAR USUARIO (Solo Admin)
+app.delete('/api/usuarios/:id', verificarToken, async (req, res) => {
+    if (req.user.rol !== 'admin') {
+        return res.status(403).json({ error: 'Acción restringida. Solo el Administrador puede eliminar usuarios.' });
+    }
+
+    const usuarioId = req.params.id;
+
+    try {
+        // 1. Verificar si el usuario existe antes de intentar eliminarlo
+        const usuarioExistente = await pool.query('SELECT id, nombre_completo FROM usuarios WHERE id = $1', [usuarioId]);
+        if (usuarioExistente.rows.length === 0) {
+            return res.status(404).json({ error: 'El usuario que intenta eliminar no existe.' });
+        }
+
+        // 2. Ejecutar la eliminación
+        await pool.query('DELETE FROM usuarios WHERE id = $1', [usuarioId]);
+
+        res.json({ 
+            message: `Usuario "${usuarioExistente.rows[0].nombre_completo}" eliminado con éxito.` 
+        });
+
+    } catch (err) {
+        console.error("❌ Error al eliminar usuario:", err);
+        res.status(500).json({ error: 'Error interno del servidor al eliminar el usuario: ' + err.message });
+    }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
