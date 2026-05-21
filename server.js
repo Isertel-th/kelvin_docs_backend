@@ -647,9 +647,9 @@ app.get('/api/usuarios', verificarToken, async (req, res) => {
     }
 
     try {
-        // Consultamos los campos esenciales de la tabla usuarios
+        // 🌟 CORRECCIÓN AQUÍ: Quitamos el campo 'departamento' que ya no existe en Postgres
         const query = `
-            SELECT id, foto_url, nombre_completo, cedula, correo, celular, departamento, rol, fecha_ingreso 
+            SELECT id, foto_url, nombre_completo, cedula, correo, celular, rol, fecha_ingreso 
             FROM usuarios 
             ORDER BY fecha_ingreso DESC
         `;
