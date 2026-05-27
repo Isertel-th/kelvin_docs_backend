@@ -78,7 +78,7 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
     }
 
     const driveItem = await res.json();
-    return driveItem.webUrl; 
+    return driveItem["@microsoft.graph.downloadUrl"] || driveItem.webUrl; 
 }
 
 // Configuración de Multer para almacenamiento en Memoria (Buffer temporal)
