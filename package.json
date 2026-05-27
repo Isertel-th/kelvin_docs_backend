@@ -10,15 +10,15 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@azure/msal-node": "^5.2.2",
+    "@microsoft/microsoft-graph-client": "^3.0.7",
     "bcrypt": "^6.0.0",
     "bcryptjs": "^3.0.3",
-    "cloudinary": "^2.8.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.0.2",
-    "multer-storage-cloudinary": "^4.0.0",
     "pg": "^8.16.3"
   }
 }

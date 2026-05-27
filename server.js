@@ -3,9 +3,13 @@ const { Pool } = require('pg');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
 const multer = require('multer');
-const cloudinary = require('cloudinary').v2;
-const { CloudinaryStorage } = require('multer-storage-cloudinary');
+const msal = require('@azure/msal-node');
+const graph = require('@microsoft/microsoft-graph-client');
 require('dotenv').config();
+
+// Configuración de Multer en memoria (Archivos temporales en RAM para enviarlos a OneDrive)
+const storage = multer.memoryStorage(); 
+const upload = multer({ storage });
 
 const app = express();
 app.use(express.json());
@@ -22,22 +26,99 @@ pool.query('SELECT NOW()', (err, res) => {
     else console.log('✅ DB Conectada');
 });
 
-cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET
-});
+// --- CONFIGURACIÓN DE AUTENTICACIÓN CON MICROSOFT (ONEDRIVE) ---
+const msalConfig = {
+    auth: {
+        clientId: process.env.MICROSOFT_CLIENT_ID,
+        authority: `https://login.microsoftonline.com/${process.env.MICROSOFT_TENANT_ID}`,
+        clientSecret: process.env.MICROSOFT_CLIENT_SECRET,
+    }
+};
 
-const storage = new CloudinaryStorage({
-    cloudinary: cloudinary,
-    params: async (req, file) => ({
-        folder: 'isertel_gestion',
-        format: file.mimetype === 'application/pdf' ? 'pdf' : 'jpg',
-        public_id: `${Date.now()}_${file.originalname.split('.')[0]}`
-    })
-});
+const cca = new msal.ConfidentialClientApplication(msalConfig);
 
-const upload = multer({ storage });
+// Función para obtener el Token de Acceso automáticamente
+async function getAccessToken() {
+    const tokenRequest = {
+        scopes: ['https://graph.microsoft.com/.default'], 
+    };
+    const response = await cca.acquireTokenByClientCredential(tokenRequest);
+    return response.accessToken;
+}
+
+// Función para subir archivos a OneDrive Empresarial
+async function subirAOneDrive(fileBuffer, originalName, folderName = 'isertel_gestion') {
+    const token = await getAccessToken();
+    
+    const client = graph.Client.init({
+        authProvider: (done) => {
+            done(null, token);
+        },
+    });
+
+    // Sanitizar y crear un nombre único respetando el nombre original
+    const nombreLimpio = originalName.replace(/[^a-zA-Z0-9.\-_]/g, '_');
+    const fileName = `${Date.now()}_${nombreLimpio}`;
+    
+    // 📧 Correo de la cuenta de Isertel dueña del OneDrive
+    const correoEmpresarial = "talentohumano@isertel.net"; 
+
+    // Ruta específica para cuentas institucionales/empresariales
+    const drivePath = `/users/${correoEmpresarial}/drive/root:/${folderName}/${fileName}:/content`;
+
+    // 1. Subir el archivo binario a la carpeta
+    await client.api(drivePath).put(fileBuffer);
+
+    // 2. Crear un enlace compartido para la organización (seguridad empresarial)
+    const linkPath = `/users/${correoEmpresarial}/drive/root:/${folderName}/${fileName}:/createLink`;
+    const linkResult = await client.api(linkPath).post({
+        type: 'view', 
+        scope: 'organization' // Permite que cualquier miembro de Isertel con el link pueda verlo
+    });
+
+    // Retorna la URL para guardarla en PostgreSQL
+    return linkResult.link.webUrl;
+}
+
+// Función para eliminar archivos físicamente de OneDrive Empresarial
+async function eliminarDeOneDrive(webUrl) {
+    try {
+        const urlObj = new URL(webUrl);
+        let fileId = urlObj.searchParams.get('resid');
+
+        if (!fileId) {
+            fileId = urlObj.searchParams.get('id');
+        }
+
+        if (!fileId) {
+            const match = webUrl.match(/[?&]id=([^&]+)/);
+            if (match) {
+                fileId = decodeURIComponent(match[1]);
+            }
+        }
+
+        if (!fileId) {
+            console.log("⚠️ No se pudo extraer el ID de OneDrive desde la URL, se omitirá el borrado físico.");
+            return;
+        }
+
+        const token = await getAccessToken();
+        const client = graph.Client.init({
+            authProvider: (done) => {
+                done(null, token);
+            },
+        });
+
+        const correoEmpresarial = "talentohumano@isertel.net"; 
+        const deletePath = `/users/${correoEmpresarial}/drive/items/${fileId}`;
+
+        await client.api(deletePath).delete();
+        console.log(`✅ Archivo con ID ${fileId} eliminado físicamente de OneDrive.`);
+
+    } catch (error) {
+        console.error("❌ Error al intentar eliminar el archivo físico en OneDrive:", error.message);
+    }
+}
 
 // --- FUNCIONES DE VALIDACIÓN ---
 const esCorreoValido = (email) => {
@@ -59,7 +140,6 @@ const verificarToken = (req, res, next) => {
 };
 
 const permisoAdminDoc = (req, res, next) => {
-    // Añadimos 'kelvin' a la lista de roles autorizados
     if (req.user.rol === 'admin' || req.user.rol === 'doc' || req.user.rol === 'kelvin') {
         next();
     } else {
@@ -70,24 +150,18 @@ const permisoAdminDoc = (req, res, next) => {
 // --- RUTAS ---
 
 app.post('/api/login', async (req, res) => {
-    // El campo del formulario sigue llegando como 'username', pero adentro lo compararemos con la columna 'correo'
     const { username, password } = req.body; 
     try {
-        // 1. Buscar en la tabla de Usuarios usando la columna CORREO
         let result = await pool.query('SELECT * FROM usuarios WHERE correo = $1', [username]);
         let user = result.rows[0];
         let esPasswordCorrecto = false;
 
         if (user) {
-            // Comparación directa en texto plano usando tu nueva columna 'contrasenia'
             esPasswordCorrecto = (password === user.contrasenia);
         } else {
-            // 2. Si no es un usuario administrador/gestor, buscar en la tabla de Nomina (Empleados)
-            // Aquí se mantiene buscando por username (que suele ser el alias o la cédula del empleado)
             result = await pool.query('SELECT * FROM nomina WHERE username = $1', [username]);
             user = result.rows[0];
             if (user) {
-                // Para empleados de nómina, su clave sigue siendo la cédula
                 esPasswordCorrecto = (password === user.cedula);
             }
         }
@@ -103,14 +177,12 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
-
-
+// 1. ELIMINAR DOCUMENTOS ADMINISTRATIVOS GENERALES (Solo limpia Postgres, preserva OneDrive)
 app.delete('/api/admin/documentos/:id', verificarToken, async (req, res) => {
     if (req.user.rol !== 'admin') return res.status(403).json({ error: 'Acción restringida' });
     
     const { id } = req.params;
     try {
-        // Eliminamos puntualmente de las tablas de administración general
         const resActivo = await pool.query("DELETE FROM documentos WHERE id = $1", [id]);
         const resPasivo = await pool.query("DELETE FROM documentos_pasivos WHERE id = $1", [id]);
         
@@ -123,9 +195,6 @@ app.delete('/api/admin/documentos/:id', verificarToken, async (req, res) => {
         res.status(500).json({ error: "Error en la base de datos al eliminar: " + err.message });
     }
 });
-
-
-
 
 app.get('/api/admin/empleados', verificarToken, permisoAdminDoc, async (req, res) => {
     try {
@@ -145,39 +214,34 @@ app.post('/api/admin/crear-usuario', verificarToken, upload.single('foto'), asyn
     if (req.user.rol !== 'admin') return res.status(403).json({ error: 'Solo el admin crea usuarios' });
     
     const { cedula, nombre_completo, fecha_ingreso, correo, celular, direccion, username } = req.body;
-    const foto_url = req.file ? req.file.path : null;
 
     if(!cedula || cedula.length !== 10) return res.status(400).json({ error: 'Cédula debe tener 10 dígitos' });
     if(!correo || !esCorreoValido(correo)) return res.status(400).json({ error: 'Correo inválido o dominio no permitido' });
-    if(!nombre_completo || !foto_url) return res.status(400).json({ error: 'Faltan campos obligatorios o la foto' });
+    if(!nombre_completo || !req.file) return res.status(400).json({ error: 'Faltan campos obligatorios o la foto del colaborador' });
 
-    // Si no envías un username personalizado desde el frontend, usamos la cédula por defecto de forma segura
     const usuarioLogin = username || cedula;
 
     try {
+        const urlOneDrive = await subirAOneDrive(req.file.buffer, req.file.originalname);
+        
         await pool.query(
             'INSERT INTO nomina (username, cedula, nombre_completo, rol, fecha_ingreso, correo, celular, direccion, foto_url) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
-            [usuarioLogin, cedula, nombre_completo, 'user', fecha_ingreso || null, correo, celular, direccion, foto_url]
+            [usuarioLogin, cedula, nombre_completo, 'user', fecha_ingreso || null, correo, celular, direccion, urlOneDrive]
         );
+        
         res.json({ message: 'Ok' });
     } catch (err) { 
-        console.error(err);
+        console.error("❌ Error en crear-usuario:", err);
         res.status(500).json({ error: "Error al guardar en Nómina. Verifique si la cédula o correo ya existen." }); 
     }
 });
 
-
-// ENDPOINT: Modificar datos de un empleado de nómina activa
-// ENDPOINT ACTUALIZADO: Modificar datos de un colaborador (Nómina o Pasivos)
-// ENDPOINT ACTUALIZADO: Modificar datos de un colaborador (SOLO Nómina Activa)
 app.put('/api/admin/modificar-usuario/:tabla/:id', verificarToken, upload.single('foto'), async (req, res) => {
     if (req.user.rol !== 'admin') return res.status(403).json({ error: 'Solo el administrador puede modificar datos' });
     
     const { tabla, id } = req.params;
-    const { cedula, nombre_completo, fecha_ingreso, correo, celular, direccion } = req.body;
-    const nueva_foto_url = req.file ? req.file.path : null;
+    const { cedula, nombre_completo, fecha_ingreso, correo, celular, direccion, username } = req.body;
 
-    // RESTRICCIÓN DE SEGURIDAD: Bloquear por completo cualquier intento sobre la tabla 'pasivos'
     if (tabla === 'pasivos') {
         return res.status(403).json({ error: 'Los registros de personal pasivo son históricos y no se pueden modificar.' });
     }
@@ -190,33 +254,33 @@ app.put('/api/admin/modificar-usuario/:tabla/:id', verificarToken, upload.single
     if (!correo || !esCorreoValido(correo)) return res.status(400).json({ error: 'Correo inválido o dominio institucional no permitido' });
     if (!nombre_completo) return res.status(400).json({ error: 'El nombre completo es obligatorio' });
 
+    const usuarioLogin = username || cedula;
+
     try {
-        // 1. Validar si el registro existe en la tabla seleccionada
         const existeUser = await pool.query(`SELECT foto_url FROM ${tabla} WHERE id = $1`, [id]);
         if (existeUser.rows.length === 0) {
             return res.status(404).json({ error: `El colaborador no existe en la tabla de ${tabla}.` });
         }
 
-        // 2. Conservar foto actual si no se sube una nueva
-        const fotoFinal = nueva_foto_url ? nueva_foto_url : existeUser.rows[0].foto_url;
+        let fotoFinal = existeUser.rows[0].foto_url;
 
-        // 3. Ejecutar la actualización dinámica en la tabla 'nomina'
+        if (req.file) {
+            fotoFinal = await subirAOneDrive(req.file.buffer, req.file.originalname);
+        }
+
         await pool.query(
             `UPDATE ${tabla} 
              SET username = $1, cedula = $2, nombre_completo = $3, fecha_ingreso = $4, correo = $5, celular = $6, direccion = $7, foto_url = $8 
              WHERE id = $9`,
-            [cedula, cedula, nombre_completo, fecha_ingreso || null, correo, celular, direccion, fotoFinal, id]
+            [usuarioLogin, cedula, nombre_completo, fecha_ingreso || null, correo, celular, direccion, fotoFinal, id]
         );
 
         res.json({ message: 'Ok' });
     } catch (err) {
-        console.error(err);
+        console.error("❌ Error en modificar-usuario:", err);
         res.status(500).json({ error: "Error al actualizar los datos. Verifique que la cédula o correo no estén duplicados." });
     }
 });
-
-
-
 
 app.post('/api/admin/mover-a-pasivo/:id', verificarToken, async (req, res) => {
     if (req.user.rol !== 'admin') return res.status(403).json({ error: 'Acción restringida' });
@@ -225,12 +289,10 @@ app.post('/api/admin/mover-a-pasivo/:id', verificarToken, async (req, res) => {
     try {
         await client.query('BEGIN');
 
-        // 1. Obtener los datos actuales desde la tabla 'nomina'
         const userRes = await client.query('SELECT * FROM nomina WHERE id = $1', [req.params.id]);
         if (userRes.rows.length === 0) throw new Error("Empleado no encontrado en nómina");
         const u = userRes.rows[0];
         
-        // 2. Insertar en la tabla 'pasivos' y obtener el nuevo ID generado
         const insertPasivo = await client.query(
             `INSERT INTO pasivos (username, cedula, nombre_completo, rol, fecha_ingreso, correo, celular, direccion, foto_url) 
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
@@ -238,18 +300,15 @@ app.post('/api/admin/mover-a-pasivo/:id', verificarToken, async (req, res) => {
         );
         const nuevoId = insertPasivo.rows[0].id;
 
-// 3. Mover los documentos generales a la tabla de pasivos resguardando la metadata real
-await client.query(
-    `INSERT INTO documentos_pasivos (usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo) 
-     SELECT $1, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo FROM documentos WHERE usuario_id = $2`,
-    [nuevoId, u.id]
-);
+        await client.query(
+            `INSERT INTO documentos_pasivos (usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo) 
+             SELECT $1, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo FROM documentos WHERE usuario_id = $2`,
+            [nuevoId, u.id]
+        );
 
-        // 4. Actualizar carpetas médicas y de aptitud para que apunten al nuevo ID del pasivo
         await client.query('UPDATE docus_medicos SET usuario_id = $1 WHERE usuario_id = $2', [nuevoId, u.id]);
         await client.query('UPDATE certificados_aptitud SET usuario_id = $1 WHERE usuario_id = $2', [nuevoId, u.id]);
 
-        // 5. Eliminar los registros de las tablas de activos
         await client.query('DELETE FROM documentos WHERE usuario_id = $1', [u.id]);
         await client.query('DELETE FROM nomina WHERE id = $1', [u.id]);
 
@@ -268,8 +327,6 @@ app.post('/api/admin/subir-a-usuario', verificarToken, permisoAdminDoc, upload.s
     const { tipo_documento, subtipo_documento, usuario_id, nombre_user, es_pasivo, nombre_archivo, fecha_documento, periodo } = req.body;
 
     let tabla;
-    
-    // Nueva lógica de clasificación
     if (tipo_documento === "Certificado de Competencia") {
         tabla = 'certifi_competencia';
     } else if (tipo_documento === "Acta de EPP's") {
@@ -279,25 +336,29 @@ app.post('/api/admin/subir-a-usuario', verificarToken, permisoAdminDoc, upload.s
     } else if (tipo_documento === "Certificados de Aptitud") {
         tabla = 'certificados_aptitud';
     } else {
-        // Para cualquier otro documento general
         tabla = es_pasivo === 'true' ? 'documentos_pasivos' : 'documentos';
     }
 
     try {
+        const nombreFinalArchivo = nombre_archivo || req.file.originalname;
+        const urlOneDrive = await subirAOneDrive(req.file.buffer, nombreFinalArchivo);
+
         await pool.query(
             `INSERT INTO ${tabla} (usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo) 
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, 
-            [usuario_id, tipo_documento, subtipo_documento || 'General / Único', req.file.path, nombre_user, nombre_archivo, fecha_documento || null, periodo || null]
+            [usuario_id, tipo_documento, subtipo_documento || 'General / Único', urlOneDrive, nombre_user, nombreFinalArchivo, fecha_documento || null, periodo || null]
         );
         res.json({ message: 'Ok' });
     } catch (err) { 
-        res.status(500).json({ error: err.message });
+       console.error("Error al subir a OneDrive:", err);
+        res.status(500).json({ error: 'Error al procesar el archivo: ' + err.message });
     }
 });
 
 app.get('/api/admin/documentos/:id', verificarToken, permisoAdminDoc, async (req, res) => {
     const esPasivo = req.query.pasivo === 'true';
-    const tablaPrincipal = esPasivo ? 'documentos_pasivos' : 'documentos';
+    const tablaPrincipal = esPasivo ? 'documentos_pasivos' : 'documentos'; 
+    
     try {
         const query = `SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
                        FROM ${tablaPrincipal} WHERE usuario_id = $1 ORDER BY fecha_documento DESC, created_at DESC`;
@@ -325,29 +386,6 @@ app.get('/api/doctor/certificados-globales', verificarToken, permisoAdminDoc, as
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.post('/api/subir-empresa', verificarToken, upload.single('archivo'), async (req, res) => {
-    const { tipo_documento } = req.body;
-    try {
-        await pool.query('INSERT INTO documentos_empresa (tipo_documento, url_cloudinary) VALUES ($1, $2)', 
-            [tipo_documento, req.file.path]);
-        res.json({ message: 'Ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.get('/api/admin/documentos-empresa', verificarToken, async (req, res) => {
-    try {
-        const result = await pool.query('SELECT * FROM documentos_empresa ORDER BY id DESC');
-        res.json(result.rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.delete('/api/admin/documentos-empresa/:id', verificarToken, async (req, res) => {
-    try {
-        await pool.query('DELETE FROM documentos_empresa WHERE id = $1', [req.params.id]);
-        res.json({ message: 'Ok' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
 // --- ENLACES DE APTITUD MÉDICA ---
 app.get('/api/doctor/aptitud/:id', verificarToken, permisoAdminDoc, async (req, res) => {
     try {
@@ -361,12 +399,14 @@ app.get('/api/doctor/aptitud/:id', verificarToken, permisoAdminDoc, async (req, 
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Asegúrate de que este endpoint tenga la lógica completa de clasificación
 app.post('/api/doctor/subir-aptitud', verificarToken, permisoAdminDoc, upload.single('archivo'), async (req, res) => {
     const { tipo_documento, subtipo_documento, usuario_id, nombre_user, nombre_archivo, fecha_documento, periodo } = req.body;
     
-    // AQUÍ ESTÁ LA CLAVE: Definir la tabla según el tipo
-    let tabla = 'documentos'; // Por defecto
+    if (!req.file) {
+        return res.status(400).json({ error: 'No se ha seleccionado ningún archivo para subir.' });
+    }
+
+    let tabla = 'documentos'; 
     if (tipo_documento === 'Certificados Médicos') {
         tabla = 'docus_medicos';
     } else if (tipo_documento === 'Certificados de Aptitud') {
@@ -374,17 +414,23 @@ app.post('/api/doctor/subir-aptitud', verificarToken, permisoAdminDoc, upload.si
     }
 
     try {
+        const nombreFinalArchivo = nombre_archivo || req.file.originalname;
+        const urlOneDrive = await subirAOneDrive(req.file.buffer, nombreFinalArchivo);
+
         await pool.query(
             `INSERT INTO ${tabla} (usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo) 
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, 
-            [usuario_id, tipo_documento, subtipo_documento, req.file.path, nombre_user, nombre_archivo, fecha_documento, periodo]
+            [usuario_id, tipo_documento, subtipo_documento || 'General', urlOneDrive, nombre_user, nombreFinalArchivo, fecha_documento || null, periodo || null]
         );
+        
         res.json({ message: 'Ok' });
     } catch (err) { 
-        res.status(500).json({ error: err.message });
+        console.error("❌ Error en subir-aptitud (Doctor):", err);
+        res.status(500).json({ error: 'Error al procesar y subir el documento: ' + err.message });
     }
 });
-// CORREGIDO: Endpoint del Médico (Ya no borra masivamente por ID duplicado)
+
+// ELIMINAR REGISTRO MÉDICO (Solo Postgres, preserva OneDrive)
 app.delete('/api/doctor/aptitud/:id', verificarToken, permisoAdminDoc, async (req, res) => {
     if (req.user.rol !== 'doc' && req.user.rol !== 'admin') {
         return res.status(403).json({ error: 'No tienes permisos para esta acción' });
@@ -408,9 +454,12 @@ app.delete('/api/doctor/aptitud/:id', verificarToken, permisoAdminDoc, async (re
 // --- ENLACES GESTOR KELVIN ---
 app.post('/api/kelvin/subir-certificados', verificarToken, permisoAdminDoc, upload.single('archivo'), async (req, res) => {
     const { tipo_documento, subtipo_documento, usuario_id, nombre_archivo, fecha_documento, periodo } = req.body;
-    let tabla = '';
+    
+    if (!req.file) {
+        return res.status(400).json({ error: 'No se ha seleccionado ningún archivo para subir.' });
+    }
 
-    // Coincidencia exacta con el admin
+    let tabla = '';
     if (tipo_documento === "Certificado de Competencia") {
         tabla = 'certifi_competencia';
     } else if (tipo_documento === "Acta de EPP's") {
@@ -420,14 +469,19 @@ app.post('/api/kelvin/subir-certificados', verificarToken, permisoAdminDoc, uplo
     }
 
     try {
+        const nombreFinalArchivo = nombre_archivo || req.file.originalname;
+        const urlOneDrive = await subirAOneDrive(req.file.buffer, nombreFinalArchivo);
+
         await pool.query(
             `INSERT INTO ${tabla} (usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo) 
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, 
-            [usuario_id, tipo_documento, subtipo_documento || 'General / Único', req.file.path, 'Gestor Kelvin', nombre_archivo, fecha_documento || null, periodo || null]
+            [usuario_id, tipo_documento, subtipo_documento || 'General / Único', urlOneDrive, 'Gestor Kelvin', nombreFinalArchivo, fecha_documento || null, periodo || null]
         );
+        
         res.json({ message: 'Ok' });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error("❌ Error en subir-certificados (Kelvin):", err);
+        res.status(500).json({ error: 'Error al procesar y subir el documento: ' + err.message });
     }
 });
 
@@ -446,18 +500,14 @@ app.get('/api/kelvin/documentos/:id', verificarToken, permisoAdminDoc, async (re
     }
 });
 
-
-
-// NUEVO: Endpoint para que el Gestor Kelvin pueda eliminar sus documentos técnicos
+// ELIMINAR DOCUMENTO KELVIN (Solo Postgres, preserva OneDrive)
 app.delete('/api/kelvin/documentos/:id', verificarToken, permisoAdminDoc, async (req, res) => {
-    // Validamos que sea Kelvin o el administrador general
     if (req.user.rol !== 'kelvin' && req.user.rol !== 'admin') {
         return res.status(403).json({ error: 'No tienes permisos para esta acción' });
     }
 
     const { id } = req.params;
     try {
-        // Borramos estrictamente de las tablas técnicas asignadas a Kelvin
         const resCompetencia = await pool.query("DELETE FROM certifi_competencia WHERE id = $1", [id]);
         const resEpp = await pool.query("DELETE FROM acta_epps WHERE id = $1", [id]);
         
@@ -471,47 +521,43 @@ app.delete('/api/kelvin/documentos/:id', verificarToken, permisoAdminDoc, async 
     }
 });
 
-
-
 // ==========================================
-//   RUTAS PARA REPOSITORIO EMPRESA
+//   RUTAS UNIFICADAS: REPOSITORIO EMPRESA
 // ==========================================
 
-// 1. Subir documento institucional
-// 1. Subir documento institucional (Solo PDFs)
 app.post('/api/empresa/documentos', verificarToken, upload.single('archivo'), async (req, res) => {
     if (req.user.rol !== 'admin') {
         return res.status(403).json({ error: 'No tienes permisos para subir documentos de empresa' });
     }
 
     const { tipo_documento } = req.body;
-    const archivo_url = req.file ? req.file.path : null;
-    const nombre_original = req.file ? req.file.originalname : null;
 
-    if (!tipo_documento || !archivo_url) {
+    if (!req.file || !tipo_documento) {
         return res.status(400).json({ error: 'Faltan campos obligatorios: Tipo de documento o Archivo.' });
     }
 
-    // VALIDACIÓN BACKEND: Verificar que Multer haya recibido un archivo PDF
-    if (req.file && req.file.mimetype !== 'application/pdf') {
+    if (req.file.mimetype !== 'application/pdf') {
         return res.status(400).json({ error: 'El archivo subido no es un PDF válido.' });
     }
 
     try {
+        const nombreOriginal = req.file.originalname;
+        const urlOneDrive = await subirAOneDrive(req.file.buffer, nombreOriginal);
+
         const query = `
             INSERT INTO documentos_empresa (tipo_documento, url_cloudinary, nombre_archivo)
             VALUES ($1, $2, $3)
             RETURNING *
         `;
-        const result = await pool.query(query, [tipo_documento, archivo_url, nombre_original]);
+        const result = await pool.query(query, [tipo_documento, urlOneDrive, nombreOriginal]);
+        
         res.json({ message: 'Ok', documento: result.rows[0] });
     } catch (err) {
-        console.error(err);
+        console.error("❌ Error en documentos-empresa:", err);
         res.status(500).json({ error: 'Error al registrar el documento institucional: ' + err.message });
     }
 });
 
-// 2. Obtener todos los documentos del repositorio institucional
 app.get('/api/empresa/documentos', verificarToken, async (req, res) => {
     try {
         const query = 'SELECT id, tipo_documento, url_cloudinary, nombre_archivo, fecha_subida FROM documentos_empresa ORDER BY fecha_subida DESC';
@@ -522,7 +568,7 @@ app.get('/api/empresa/documentos', verificarToken, async (req, res) => {
     }
 });
 
-// 3. Eliminar un documento institucional
+// ELIMINAR DOCUMENTO EMPRESA (Solo Postgres, preserva OneDrive)
 app.delete('/api/empresa/documentos/:id', verificarToken, async (req, res) => {
     if (req.user.rol !== 'admin') {
         return res.status(403).json({ error: 'Acción restringida. Solo el Administrador puede eliminar.' });
@@ -531,20 +577,17 @@ app.delete('/api/empresa/documentos/:id', verificarToken, async (req, res) => {
     const { id } = req.params;
     try {
         const result = await pool.query('DELETE FROM documentos_empresa WHERE id = $1', [id]);
-        if (result.rowCount > 0) {
-            res.json({ message: 'Ok' });
-        } else {
-            res.status(404).json({ error: 'Documento no encontrado' });
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: 'Documento no encontrado' });
         }
+        res.json({ message: 'Ok' });
     } catch (err) {
         res.status(500).json({ error: 'Error al eliminar de la base de datos: ' + err.message });
     }
 });
 
+// --- CREADOR DE ADMINS Y GESTORES ---
 
-//CREADOR DE ADMINS
-
-// Endpoint para registrar un nuevo usuario (Solo Admin)
 app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res) => {
     if (req.user.rol !== 'admin') {
         return res.status(403).json({ error: 'Acción restringida. Solo el Administrador puede registrar usuarios.' });
@@ -559,8 +602,6 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
     if (!req.file) {
         return res.status(400).json({ error: 'La foto de perfil es obligatoria. Por favor, suba una imagen.' });
     }
-
-    const foto_url = req.file.path; 
 
     nombre_completo = nombre_completo
         .trim()
@@ -577,17 +618,18 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
     }
 
     correo = correo.trim().toLowerCase();
-    const dominiosPermitidos = ['gmail.com', 'hotmail.com', 'outlook.com', 'outlook.es'];
+    const dominiosPermitidos = ['gmail.com', 'hotmail.com', 'outlook.com', 'outlook.es', 'isertel.com.ec'];
     const correoDominio = correo.split('@')[1];
 
     if (!correo.includes('@') || !dominiosPermitidos.includes(correoDominio)) {
-        return res.status(400).json({ error: 'El correo electrónico no es válido o no pertenece a un dominio permitido (Gmail, Hotmail, Outlook).' });
+        return res.status(400).json({ error: 'El correo electrónico no es válido o no pertenece a un dominio permitido.' });
     }
 
     const fecha_ingreso = new Date();
 
     try {
-        // 🌟 CORRECCIÓN: Eliminamos la columna y el parámetro 'departamento' de la consulta SQL
+        const urlOneDrive = await subirAOneDrive(req.file.buffer, req.file.originalname);
+
         const query = `
             INSERT INTO usuarios 
             (cedula, rol, nombre_completo, correo, celular, foto_url, fecha_ingreso, direccion, contrasenia) 
@@ -595,25 +637,20 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
             RETURNING id, correo, fecha_ingreso
         `;
         
-        // 🌟 CORRECCIÓN: Ahora son sólo 9 parámetros ($1 al $9)
         const values = [
             cedula.trim(), 
-            departamento, // Se mapea directo a la columna 'rol'
+            departamento, 
             nombre_completo, 
             correo, 
             celular.trim(), 
-            foto_url, 
+            urlOneDrive, 
             fecha_ingreso,
             direccion.trim(),
             contrasenia 
         ];
         
         const result = await pool.query(query, values);
-        
-        res.status(201).json({ 
-            message: 'Usuario registrado con éxito', 
-            usuario: result.rows[0] 
-        });
+        res.status(201).json({ message: 'Usuario registrado con éxito', usuario: result.rows[0] });
 
     } catch (err) {
         console.error("Error al registrar usuario:", err);
@@ -623,19 +660,10 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
         res.status(500).json({ error: 'Error interno del servidor al guardar el usuario: ' + err.message });
     }
 });
-// ==========================================
-// NUEVA RUTA: Obtener lista de departamentos
-// ==========================================
 
-// ==========================================
-// RUTA PÚBLICA: Obtener lista de departamentos
-// ==========================================
-app.get('/api/departamentos', async (req, res) => { // <-- AQUÍ: Agregamos /api antes de /departamentos
+app.get('/api/departamentos', async (req, res) => { 
     try {
-        // Consultamos directamente id y nombre de tu tabla
         const result = await pool.query('SELECT id, nombre FROM departamentos ORDER BY nombre ASC');
-        
-        // Enviamos la lista al frontend
         res.json(result.rows);
     } catch (err) {
         console.error("❌ Error en el servidor al consultar departamentos:", err);
@@ -643,16 +671,12 @@ app.get('/api/departamentos', async (req, res) => { // <-- AQUÍ: Agregamos /api
     }
 });
 
-
-
-// Endpoint para obtener la lista de usuarios registrados (Solo Admin)
 app.get('/api/usuarios', verificarToken, async (req, res) => {
     if (req.user.rol !== 'admin') {
         return res.status(403).json({ error: 'Acción restringida. Solo el Administrador puede ver esta lista.' });
     }
 
     try {
-        // 🌟 CORRECCIÓN AQUÍ: Quitamos el campo 'departamento' que ya no existe en Postgres
         const query = `
             SELECT id, foto_url, nombre_completo, cedula, correo, celular, rol, fecha_ingreso 
             FROM usuarios 
@@ -665,9 +689,6 @@ app.get('/api/usuarios', verificarToken, async (req, res) => {
         res.status(500).json({ error: 'Error interno del servidor al cargar el listado de usuarios' });
     }
 });
-
-//EDITAR USUARIOS DEL ADMIN
-//OJITOOOOO
 
 app.put('/api/usuarios/:id', verificarToken, upload.single('foto'), async (req, res) => {
     if (req.user.rol !== 'admin') {
@@ -687,13 +708,11 @@ app.put('/api/usuarios/:id', verificarToken, upload.single('foto'), async (req, 
             return res.status(404).json({ error: 'El usuario solicitado no existe.' });
         }
 
-        // Manejo de la foto (si no sube una nueva, se conserva la actual)
-        let foto_url = usuarioExistente.rows[0].foto_url;
+        let fotoFinal = usuarioExistente.rows[0].foto_url;
         if (req.file) {
-            foto_url = req.file.path;
+            fotoFinal = await subirAOneDrive(req.file.buffer, req.file.originalname);
         }
 
-        // Manejo de la contraseña (si no escribe una nueva, se conserva la existente)
         let passwordFinal = usuarioExistente.rows[0].contrasenia;
         if (contrasenia && contrasenia.trim() !== '') {
             passwordFinal = contrasenia; 
@@ -701,28 +720,13 @@ app.put('/api/usuarios/:id', verificarToken, upload.single('foto'), async (req, 
 
         const queryUpdate = `
             UPDATE usuarios 
-            SET cedula = $1, 
-                rol = $2, 
-                nombre_completo = $3, 
-                correo = $4, 
-                celular = $5, 
-                foto_url = $6, 
-                direccion = $7, 
-                contrasenia = $8
+            SET cedula = $1, rol = $2, nombre_completo = $3, correo = $4, celular = $5, foto_url = $6, direccion = $7, contrasenia = $8
             WHERE id = $9
             RETURNING id, nombre_completo, correo, rol
         `;
 
         const values = [
-            cedula.trim(),
-            rol.trim(), 
-            nombre_completo.trim(),
-            correo.trim().toLowerCase(),
-            celular.trim(),
-            foto_url,
-            direccion.trim(),
-            passwordFinal,
-            usuarioId
+            cedula.trim(), rol.trim(), nombre_completo.trim(), correo.trim().toLowerCase(), celular.trim(), fotoFinal, direccion.trim(), passwordFinal, usuarioId
         ];
 
         const resultado = await pool.query(queryUpdate, values);
@@ -737,9 +741,7 @@ app.put('/api/usuarios/:id', verificarToken, upload.single('foto'), async (req, 
     }
 });
 
-
-
-// ELIMINAR USUARIO (Solo Admin)
+// ELIMINAR GESTOR/ADMIN (Solo Postgres, preserva OneDrive)
 app.delete('/api/usuarios/:id', verificarToken, async (req, res) => {
     if (req.user.rol !== 'admin') {
         return res.status(403).json({ error: 'Acción restringida. Solo el Administrador puede eliminar usuarios.' });
@@ -748,22 +750,20 @@ app.delete('/api/usuarios/:id', verificarToken, async (req, res) => {
     const usuarioId = req.params.id;
 
     try {
-        // 1. Verificar si el usuario existe antes de intentar eliminarlo
         const usuarioExistente = await pool.query('SELECT id, nombre_completo FROM usuarios WHERE id = $1', [usuarioId]);
         if (usuarioExistente.rows.length === 0) {
             return res.status(404).json({ error: 'El usuario que intenta eliminar no existe.' });
         }
 
-        // 2. Ejecutar la eliminación
         await pool.query('DELETE FROM usuarios WHERE id = $1', [usuarioId]);
 
         res.json({ 
-            message: `Usuario "${usuarioExistente.rows[0].nombre_completo}" eliminado con éxito.` 
+            message: `Usuario "${usuarioExistente.rows[0].nombre_completo}" eliminado con éxito. Su archivo de respaldo permanece en OneDrive.` 
         });
 
     } catch (err) {
         console.error("❌ Error al eliminar usuario:", err);
-        res.status(500).json({ error: 'Error interno del servidor al eliminar el usuario: ' + err.message });
+        res.status(500).json({ error: 'Error interno del servidor al procesar la eliminación: ' + err.message });
     }
 });
 
