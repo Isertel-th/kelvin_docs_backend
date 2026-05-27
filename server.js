@@ -262,6 +262,10 @@ app.post('/api/admin/mover-a-pasivo/:id', verificarToken, async (req, res) => {
         );
         const nuevoId = insertPasivo.rows[0].id;
 
+        // --- ACTUALIZACIÓN DE TABLAS UNIFICADAS ---
+        await client.query('UPDATE acta_epps SET usuario_id = $1, estado = $2 WHERE usuario_id = $3', [nuevoId, 'Pasivo', u.id]);
+        await client.query('UPDATE certifi_competencia SET usuario_id = $1, estado = $2 WHERE usuario_id = $3', [nuevoId, 'Pasivo', u.id]);
+        
         await client.query(
             `INSERT INTO documentos_pasivos (usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo) 
              SELECT $1, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo FROM documentos WHERE usuario_id = $2`,
@@ -303,15 +307,24 @@ app.post('/api/admin/subir-a-usuario', verificarToken, permisoAdminDoc, upload.s
         tabla = es_pasivo === 'true' ? 'documentos_pasivos' : 'documentos';
     }
 
+    const estadoUsuario = es_pasivo === 'true' ? 'Pasivo' : 'Active'; // Mapeo dinámico para la nueva columna
+
     try {
-        // Sube a OneDrive organizándolo en una subcarpeta según el 'tipo_documento'
         const url_onedrive = await subirAOneDrive(req.file.buffer, req.file.originalname, tipo_documento);
 
-        await pool.query(
-            `INSERT INTO ${tabla} (usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, 
-            [usuario_id, tipo_documento, subtipo_documento || 'General / Único', url_onedrive, nombre_user, nombre_archivo, fecha_documento || null, periodo || null]
-        );
+        if (tabla === 'acta_epps' || tabla === 'certifi_competencia') {
+            await pool.query(
+                `INSERT INTO ${tabla} (usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, estado) 
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, 
+                [usuario_id, tipo_documento, subtipo_documento || 'General / Único', url_onedrive, nombre_user, nombre_archivo, fecha_documento || null, periodo || null, estadoUsuario]
+            );
+        } else {
+            await pool.query(
+                `INSERT INTO ${tabla} (usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo) 
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, 
+                [usuario_id, tipo_documento, subtipo_documento || 'General / Único', url_onedrive, nombre_user, nombre_archivo, fecha_documento || null, periodo || null]
+            );
+        }
         res.json({ message: 'Ok' });
     } catch (err) { 
         res.status(500).json({ error: err.message });
@@ -321,32 +334,27 @@ app.post('/api/admin/subir-a-usuario', verificarToken, permisoAdminDoc, upload.s
 app.get('/api/admin/documentos/:id', verificarToken, permisoAdminDoc, async (req, res) => {
     const esPasivo = req.query.pasivo === 'true';
     const tablaPrincipal = esPasivo ? 'documentos_pasivos' : 'documentos';
-    try {
-        const query = `SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
-                       FROM ${tablaPrincipal} WHERE usuario_id = $1 ORDER BY fecha_documento DESC, created_at DESC`;
-        const result = await pool.query(query, [req.params.id]);
-        res.json(result.rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.get('/api/doctor/certificados-globales', verificarToken, permisoAdminDoc, async (req, res) => {
+    const usuarioId = req.params.id;
+    
     try {
         const query = `
-            SELECT d.id, d.tipo_documento, d.url_cloudinary, d.created_at, n.nombre_completo as empleado_nombre, 'Activo' as estado_empleado
-            FROM documentos d
-            JOIN nomina n ON d.usuario_id = n.id
-            WHERE d.tipo_documento ILIKE '%Certificado médico%' OR d.tipo_documento ILIKE '%Reposo%'
+            SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
+            FROM ${tablaPrincipal} WHERE usuario_id = $1
             UNION ALL
-            SELECT dp.id, dp.tipo_documento, dp.url_cloudinary, dp.created_at, p.nombre_completo as empleado_nombre, 'Pasivo' as estado_empleado
-            FROM documentos_pasivos dp
-            JOIN pasivos p ON dp.usuario_id = p.id
-            WHERE dp.tipo_documento ILIKE '%Certificado médico%' OR dp.tipo_documento ILIKE '%Reposo%'
-            ORDER BY created_at DESC
-        `;
-        const result = await pool.query(query);
+            SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
+            FROM acta_epps WHERE usuario_id = $1
+            UNION ALL
+            SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
+            FROM certifi_competencia WHERE usuario_id = $1
+            ORDER BY fecha_documento DESC, created_at DESC`;
+            
+        const result = await pool.query(query, [usuarioId]);
         res.json(result.rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { 
+        res.status(500).json({ error: err.message }); 
+    }
 });
+
 
 app.post('/api/subir-empresa', verificarToken, upload.single('archivo'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'El archivo es obligatorio.' });
@@ -435,7 +443,7 @@ app.delete('/api/doctor/aptitud/:id', verificarToken, permisoAdminDoc, async (re
 // --- ENLACES GESTOR KELVIN ---
 app.post('/api/kelvin/subir-certificados', verificarToken, permisoAdminDoc, upload.single('archivo'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'El archivo es obligatorio.' });
-    const { tipo_documento, subtipo_documento, usuario_id, nombre_archivo, fecha_documento, periodo } = req.body;
+    const { tipo_documento, subtipo_documento, usuario_id, nombre_archivo, fecha_documento, periodo, es_pasivo } = req.body;
     let tabla = '';
 
     if (tipo_documento === "Certificado de Competencia") {
@@ -446,12 +454,14 @@ app.post('/api/kelvin/subir-certificados', verificarToken, permisoAdminDoc, uplo
         return res.status(400).json({ error: "Tipo de documento no permitido para Kelvin" });
     }
 
+    const estadoUsuario = es_pasivo === 'true' ? 'Pasivo' : 'Activo';
+
     try {
         const url_onedrive = await subirAOneDrive(req.file.buffer, req.file.originalname, tipo_documento);
         await pool.query(
-            `INSERT INTO ${tabla} (usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, 
-            [usuario_id, tipo_documento, subtipo_documento || 'General / Único', url_onedrive, 'Gestor Kelvin', nombre_archivo, fecha_documento || null, periodo || null]
+            `INSERT INTO ${tabla} (usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, estado) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, 
+            [usuario_id, tipo_documento, subtipo_documento || 'General / Único', url_onedrive, 'Gestor Kelvin', nombre_archivo, fecha_documento || null, periodo || null, estadoUsuario]
         );
         res.json({ message: 'Ok' });
     } catch (err) {
