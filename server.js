@@ -87,7 +87,7 @@ const upload = multer({ storage });
 
 // --- FUNCIONES DE VALIDACIÓN ---
 const esCorreoValido = (email) => {
-    const dominiosPermitidos = ['gmail.com', 'gmail.es', 'outlook.com', 'outlook.es', 'hotmail.com', 'hotmail.es', 'isertel.com.ec']; 
+    const dominiosPermitidos = ['gmail.com', 'gmail.es', 'outlook.com', 'outlook.es', 'hotmail.com', 'hotmail.es', 'isertel.com.ec', 'isertel.net']; 
     const regexBase = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
     if (!regexBase.test(email)) return false;
     const dominio = email.split('@')[1].toLowerCase();
