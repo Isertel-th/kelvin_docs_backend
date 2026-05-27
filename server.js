@@ -38,20 +38,29 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
         scopes: ['https://graph.microsoft.com/.default']
     };
     
-    // Obtener Token de Acceso Dinámico
+    // 1. Obtener Token de Acceso Dinámico
     const response = await cca.acquireTokenByClientCredential(tokenRequest);
     const token = response.accessToken;
 
-    const fileName = `${Date.now()}_${originalName}`;
-    let pathCompleto = `Documentos Isertel Sistema`;
-    
-    if (subFolder) {
-        pathCompleto += `/${subFolder}`;
-    }
-    pathCompleto += `/${fileName}`;
+    // 2. Limpiar el nombre original de caracteres conflictivos (ej: acentos, comillas de EPP's)
+    const cleanOriginalName = originalName
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "") // Quita acentos
+        .replace(/[^a-zA-Z0-9._-]/g, "_"); // Reemplaza espacios y caracteres raros por '_'
 
-    // Codificar correctamente cada segmento de la ruta de OneDrive
-    const encodedPath = pathCompleto.split('/').map(segment => encodeURIComponent(segment)).join('/');
+    const fileName = `${Date.now()}_${cleanOriginalName}`;
+    
+    // 3. Construir los segmentos de la ruta de manera segura
+    let segmentos = ['Documentos Isertel Sistema'];
+    if (subFolder) {
+        segmentos.push(subFolder.normalize("NFD").replace(/[\u0300-\u036f]/g, ""));
+    }
+    segmentos.push(fileName);
+
+    // 4. Codificar CADA segmento por separado y unirlos
+    const encodedPath = segmentos.map(segment => encodeURIComponent(segment.trim())).join('/');
+    
+    // 5. Construir la URL exacta para la API de Graph
     const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/root:/${encodedPath}:/content`;
 
     const res = await fetch(url, {
@@ -69,7 +78,7 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
     }
 
     const driveItem = await res.json();
-    return driveItem.webUrl; // Devuelve el enlace web del documento en OneDrive
+    return driveItem.webUrl; 
 }
 
 // Configuración de Multer para almacenamiento en Memoria (Buffer temporal)
