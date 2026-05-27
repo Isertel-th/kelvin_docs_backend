@@ -105,7 +105,8 @@ const verificarToken = (req, res, next) => {
 };
 
 const permisoAdminDoc = (req, res, next) => {
-    if (req.user.rol === 'admin' || req.user.rol === 'doc' || req.user.rol === 'kelvin') {
+    // Reemplazado 'admin' por 'Talento Humano'
+    if (req.user.rol === 'Talento Humano' || req.user.rol === 'doc' || req.user.rol === 'kelvin') {
         next();
     } else {
         res.status(403).json({ error: 'No tienes permisos' });
@@ -144,7 +145,8 @@ app.post('/api/login', async (req, res) => {
 
 // RESPALDO ASEGURADO: Solo elimina el registro de PostgreSQL
 app.delete('/api/admin/documentos/:id', verificarToken, async (req, res) => {
-    if (req.user.rol !== 'admin') return res.status(403).json({ error: 'Acción restringida' });
+    // Reemplazado 'admin' por 'Talento Humano'
+    if (req.user.rol !== 'Talento Humano') return res.status(403).json({ error: 'Acción restringida' });
     
     const { id } = req.params;
     try {
@@ -176,7 +178,8 @@ app.get('/api/admin/pasivos', verificarToken, permisoAdminDoc, async (req, res) 
 });
 
 app.post('/api/admin/crear-usuario', verificarToken, upload.single('foto'), async (req, res) => {
-    if (req.user.rol !== 'admin') return res.status(403).json({ error: 'Solo el admin crea usuarios' });
+    // Reemplazado 'admin' por 'Talento Humano'
+    if (req.user.rol !== 'Talento Humano') return res.status(403).json({ error: 'Solo el personal de Talento Humano crea usuarios' });
     
     const { cedula, nombre_completo, fecha_ingreso, correo, celular, direccion, username } = req.body;
 
@@ -202,7 +205,8 @@ app.post('/api/admin/crear-usuario', verificarToken, upload.single('foto'), asyn
 });
 
 app.put('/api/admin/modificar-usuario/:tabla/:id', verificarToken, upload.single('foto'), async (req, res) => {
-    if (req.user.rol !== 'admin') return res.status(403).json({ error: 'Solo el administrador puede modificar datos' });
+    // Reemplazado 'admin' por 'Talento Humano'
+    if (req.user.rol !== 'Talento Humano') return res.status(403).json({ error: 'Solo el personal de Talento Humano puede modificar datos' });
     
     const { tabla, id } = req.params;
     const { cedula, nombre_completo, fecha_ingreso, correo, celular, direccion } = req.body;
@@ -245,7 +249,8 @@ app.put('/api/admin/modificar-usuario/:tabla/:id', verificarToken, upload.single
 });
 
 app.post('/api/admin/mover-a-pasivo/:id', verificarToken, async (req, res) => {
-    if (req.user.rol !== 'admin') return res.status(403).json({ error: 'Acción restringida' });
+    // Reemplazado 'admin' por 'Talento Humano'
+    if (req.user.rol !== 'Talento Humano') return res.status(403).json({ error: 'Acción restringida' });
     
     const client = await pool.connect();
     try {
@@ -421,7 +426,8 @@ app.post('/api/doctor/subir-aptitud', verificarToken, permisoAdminDoc, upload.si
 
 // RESPALDO ASEGURADO: Solo elimina el registro de PostgreSQL
 app.delete('/api/doctor/aptitud/:id', verificarToken, permisoAdminDoc, async (req, res) => {
-    if (req.user.rol !== 'doc' && req.user.rol !== 'admin') {
+    // Reemplazado 'admin' por 'Talento Humano'
+    if (req.user.rol !== 'doc' && req.user.rol !== 'Talento Humano') {
         return res.status(403).json({ error: 'No tienes permisos para esta acción' });
     }
 
@@ -486,7 +492,8 @@ app.get('/api/kelvin/documentos/:id', verificarToken, permisoAdminDoc, async (re
 
 // RESPALDO ASEGURADO: Solo elimina el registro de PostgreSQL
 app.delete('/api/kelvin/documentos/:id', verificarToken, permisoAdminDoc, async (req, res) => {
-    if (req.user.rol !== 'kelvin' && req.user.rol !== 'admin') {
+    // Reemplazado 'admin' por 'Talento Humano'
+    if (req.user.rol !== 'kelvin' && req.user.rol !== 'Talento Humano') {
         return res.status(403).json({ error: 'No tienes permisos para esta acción' });
     }
 
@@ -510,7 +517,8 @@ app.delete('/api/kelvin/documentos/:id', verificarToken, permisoAdminDoc, async 
 // ==========================================
 
 app.post('/api/empresa/documentos', verificarToken, upload.single('archivo'), async (req, res) => {
-    if (req.user.rol !== 'admin') {
+    // Reemplazado 'admin' por 'Talento Humano'
+    if (req.user.rol !== 'Talento Humano') {
         return res.status(403).json({ error: 'No tienes permisos para subir documentos de empresa' });
     }
 
@@ -555,8 +563,9 @@ app.get('/api/empresa/documentos', verificarToken, async (req, res) => {
 
 // RESPALDO ASEGURADO: Solo elimina el registro de PostgreSQL
 app.delete('/api/empresa/documentos/:id', verificarToken, async (req, res) => {
-    if (req.user.rol !== 'admin') {
-        return res.status(403).json({ error: 'Acción restringida. Solo el Administrador puede eliminar.' });
+    // Reemplazado 'admin' por 'Talento Humano'
+    if (req.user.rol !== 'Talento Humano') {
+        return res.status(403).json({ error: 'Acción restringida. Solo el personal de Talento Humano puede eliminar.' });
     }
 
     const { id } = req.params;
@@ -575,8 +584,9 @@ app.delete('/api/empresa/documentos/:id', verificarToken, async (req, res) => {
 // --- CREADOR DE ADMINS ---
 
 app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res) => {
-    if (req.user.rol !== 'admin') {
-        return res.status(403).json({ error: 'Acción restringida. Solo el Administrador puede registrar usuarios.' });
+    // Reemplazado 'admin' por 'Talento Humano'
+    if (req.user.rol !== 'Talento Humano') {
+        return res.status(403).json({ error: 'Acción restringida. Solo Talento Humano puede registrar usuarios.' });
     }
 
     let { nombre_completo, cedula, correo, celular, departamento, direccion, contrasenia } = req.body;
@@ -662,8 +672,9 @@ app.get('/api/departamentos', async (req, res) => {
 });
 
 app.get('/api/usuarios', verificarToken, async (req, res) => {
-    if (req.user.rol !== 'admin') {
-        return res.status(403).json({ error: 'Acción restringida. Solo el Administrador puede ver esta lista.' });
+    // Reemplazado 'admin' por 'Talento Humano'
+    if (req.user.rol !== 'Talento Humano') {
+        return res.status(403).json({ error: 'Acción restringida. Solo Talento Humano puede ver esta lista.' });
     }
 
     try {
@@ -681,8 +692,9 @@ app.get('/api/usuarios', verificarToken, async (req, res) => {
 });
 
 app.put('/api/usuarios/:id', verificarToken, upload.single('foto'), async (req, res) => {
-    if (req.user.rol !== 'admin') {
-        return res.status(403).json({ error: 'Acción restricted. Solo el Administrador puede editar colaboradores.' });
+    // Reemplazado 'admin' por 'Talento Humano'
+    if (req.user.rol !== 'Talento Humano') {
+        return res.status(403).json({ error: 'Acción restringida. Solo Talento Humano puede editar colaboradores.' });
     }
 
     const usuarioId = req.params.id;
@@ -748,8 +760,9 @@ app.put('/api/usuarios/:id', verificarToken, upload.single('foto'), async (req, 
 
 // RESPALDO ASEGURADO: Solo elimina el registro de PostgreSQL
 app.delete('/api/usuarios/:id', verificarToken, async (req, res) => {
-    if (req.user.rol !== 'admin') {
-        return res.status(403).json({ error: 'Acción restringida. Solo el Administrador puede eliminar usuarios.' });
+    // Reemplazado 'admin' por 'Talento Humano'
+    if (req.user.rol !== 'Talento Humano') {
+        return res.status(403).json({ error: 'Acción restringida. Solo Talento Humano puede eliminar usuarios.' });
     }
 
     const usuarioId = req.params.id;
