@@ -136,8 +136,20 @@ app.post('/api/login', async (req, res) => {
             return res.status(400).json({ error: 'Credenciales incorrectas' });
         }
 
-        const token = jwt.sign({ id: user.id, rol: user.rol }, process.env.JWT_SECRET, { expiresIn: '8h' });
-        res.json({ token, rol: user.rol, nombre: user.nombre_completo });
+        // Metemos el array de permisos dentro del Token JWT para máxima seguridad
+        const token = jwt.sign(
+            { id: user.id, rol: user.rol, permisos: user.permisos || [] }, 
+            process.env.JWT_SECRET, 
+            { expiresIn: '8h' }
+        );
+
+        // Devolvemos el rol, nombre y sus permisos dinámicos al frontend
+        res.json({ 
+            token, 
+            rol: user.rol, 
+            nombre: user.nombre_completo,
+            permisos: user.permisos || [] // Si es nulo, mandamos array vacío
+        });
     } catch (err) { 
         res.status(500).json({ error: err.message }); 
     }
@@ -584,12 +596,12 @@ app.delete('/api/empresa/documentos/:id', verificarToken, async (req, res) => {
 // --- CREADOR DE ADMINS ---
 
 app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res) => {
-    // Reemplazado 'admin' por 'Talento Humano'
+    // Validación de seguridad de Talento Humano
     if (req.user.rol !== 'Talento Humano') {
         return res.status(403).json({ error: 'Acción restringida. Solo Talento Humano puede registrar usuarios.' });
     }
 
-    let { nombre_completo, cedula, correo, celular, departamento, direccion, contrasenia } = req.body;
+    let { nombre_completo, cedula, correo, celular, departamento, direccion, contrasenia, permisos } = req.body;
 
     if (!nombre_completo || !cedula || !correo || !celular || !departamento || !direccion || !contrasenia) {
         return res.status(400).json({ error: 'Todos los campos son obligatorios (incluyendo la Contraseña).' });
@@ -599,6 +611,7 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
         return res.status(400).json({ error: 'La foto de perfil es obligatoria. Por favor, suba una imagen.' });
     }
 
+    // Procesamiento de texto seguro
     nombre_completo = nombre_completo
         .trim()
         .split(/\s+/)
@@ -621,34 +634,53 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
         return res.status(400).json({ error: 'El correo electrónico no es válido o no pertenece a un dominio permitido (Gmail, Hotmail, Outlook).' });
     }
 
+    // CONTROL PROFESIONAL DE PERMISOS DINÁMICOS
+    // Al venir de un formulario FormData, los arrays a veces llegan como String ("Contrato,Memorándum") o undefined
+    let permisosArray = [];
+    if (permisos) {
+        if (Array.isArray(permisos)) {
+            permisosArray = permisos;
+        } else {
+            try {
+                // Si viene como JSON stringificado desde el frontend
+                permisosArray = JSON.parse(permisos);
+            } catch (e) {
+                // Si viene separado por comas de forma simple
+                permisosArray = permisos.split(',').map(p => p.trim());
+            }
+        }
+    }
+
     const fecha_ingreso = new Date();
 
     try {
         const foto_url = await subirAOneDrive(req.file.buffer, req.file.originalname, 'Fotos_Admins');
         
+        // Añadida la columna 'permisos' ($10) en el INSERT
         const query = `
             INSERT INTO usuarios 
-            (cedula, rol, nombre_completo, correo, celular, foto_url, fecha_ingreso, direccion, contrasenia) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
-            RETURNING id, correo, fecha_ingreso
+            (cedula, rol, nombre_completo, correo, celular, foto_url, fecha_ingreso, direccion, contrasenia, permisos) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) 
+            RETURNING id, correo, fecha_ingreso, permisos
         `;
         
         const values = [
             cedula.trim(), 
-            departamento, 
+            departamento, // Guarda el departamento elegido como el rol de acceso
             nombre_completo, 
             correo, 
             celular.trim(), 
             foto_url, 
             fecha_ingreso,
             direccion.trim(),
-            contrasenia 
+            contrasenia,
+            permisosArray // Array guardado de manera nativa como TEXT[] en Postgres
         ];
         
         const result = await pool.query(query, values);
         
         res.status(201).json({ 
-            message: 'Usuario registrado con éxito', 
+            message: 'Usuario registrado con éxito con sus permisos asignados', 
             usuario: result.rows[0] 
         });
 
@@ -692,16 +724,25 @@ app.get('/api/usuarios', verificarToken, async (req, res) => {
 });
 
 app.put('/api/usuarios/:id', verificarToken, upload.single('foto'), async (req, res) => {
-    // Reemplazado 'admin' por 'Talento Humano'
     if (req.user.rol !== 'Talento Humano') {
         return res.status(403).json({ error: 'Acción restringida. Solo Talento Humano puede editar colaboradores.' });
     }
 
     const usuarioId = req.params.id;
-    let { nombre_completo, cedula, correo, celular, direccion, rol, contrasenia } = req.body;
+    let { nombre_completo, cedula, correo, celular, direccion, rol, contrasenia, permisos } = req.body;
 
     if (!nombre_completo || !cedula || !correo || !celular || !direccion || !rol) {
         return res.status(400).json({ error: 'Todos los campos base son obligatorios para guardar la edición.' });
+    }
+
+    // Procesar permisos igual que en la creación
+    let permisosArray = [];
+    if (permisos) {
+        if (Array.isArray(permisos)) {
+            permisosArray = permisos;
+        } else {
+            try { permisosArray = JSON.parse(permisos); } catch (e) { permisosArray = permisos.split(',').map(p => p.trim()); }
+        }
     }
 
     try {
@@ -720,6 +761,7 @@ app.put('/api/usuarios/:id', verificarToken, upload.single('foto'), async (req, 
             passwordFinal = contrasenia; 
         }
 
+        // Añadido 'permisos = $9' en la consulta SQL
         const queryUpdate = `
             UPDATE usuarios 
             SET cedula = $1, 
@@ -729,9 +771,10 @@ app.put('/api/usuarios/:id', verificarToken, upload.single('foto'), async (req, 
                 celular = $5, 
                 foto_url = $6, 
                 direccion = $7, 
-                contrasenia = $8
-            WHERE id = $9
-            RETURNING id, nombre_completo, correo, rol
+                contrasenia = $8,
+                permisos = $9
+            WHERE id = $10
+            RETURNING id, nombre_completo, correo, rol, permisos
         `;
 
         const values = [
@@ -743,6 +786,7 @@ app.put('/api/usuarios/:id', verificarToken, upload.single('foto'), async (req, 
             foto_url,
             direccion.trim(),
             passwordFinal,
+            permisosArray,
             usuarioId
         ];
 
@@ -757,7 +801,6 @@ app.put('/api/usuarios/:id', verificarToken, upload.single('foto'), async (req, 
         res.status(500).json({ error: 'Error interno del servidor al actualizar: ' + err.message });
     }
 });
-
 // RESPALDO ASEGURADO: Solo elimina el registro de PostgreSQL
 app.delete('/api/usuarios/:id', verificarToken, async (req, res) => {
     // Reemplazado 'admin' por 'Talento Humano'
