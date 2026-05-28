@@ -336,30 +336,70 @@ app.post('/api/admin/subir-a-usuario', verificarToken, permisoAdminDoc, upload.s
     }
 });
 
-app.get('/api/admin/documentos/:id', verificarToken, permisoAdminDoc, async (req, res) => {
+// Ejemplo modificado de tu ruta /admin/documentos/:id para que filtre por permisos
+app.get('/api/admin/documentos/:id', verificarToken, async (req, res) => {
     const esPasivo = req.query.pasivo === 'true';
     const tablaPrincipal = esPasivo ? 'documentos_pasivos' : 'documentos';
     const usuarioId = req.params.id;
-    
+    const rolUsuario = req.user.rol; // El rol/departamento del usuario que inició sesión
+
     try {
+        let consultaPermitida = '';
+        let joinTabla = '';
+        let condiciones = [];
+        let valores = [usuarioId];
+
+        // --------------------------
+        // LÓGICA DE PERMISOS
+        // --------------------------
+        if (rolUsuario === 'Talento Humano' || rolUsuario === 'doc' || rolUsuario === 'kelvin') {
+            // Accesos totales o especiales como ya los tenías definidos
+            if(rolUsuario === 'doc') {
+                condiciones.push(`td.nombre IN ('Certificados Médicos', 'Certificados de Aptitud')`);
+            } else if (rolUsuario === 'kelvin') {
+                condiciones.push(`td.nombre IN ('Certificados de Competencia', 'Actas de EPP''s')`);
+            }
+            // Si es Talento Humano, no agrega WHERE, ve todo
+        } else {
+            // 🆕 AQUÍ LA MAGIA PARA NUEVOS DEPARTAMENTOS
+            // Consultamos qué tipos de documento tiene permitido ver ESTE ROL
+            const permisos = await pool.query(`
+                SELECT td.nombre 
+                FROM permisos_departamento pd
+                JOIN tipos_documento td ON pd.tipo_documento_id = td.id
+                WHERE pd.departamento_nombre = $1
+            `, [rolUsuario]);
+
+            const listaPermitidos = permisos.rows.map(p => `'${p.nombre}'`).join(',');
+            
+            if(!listaPermitidos) {
+                return res.json([]); // No tiene permisos, devuelve vacío
+            }
+            condiciones.push(`td.nombre IN (${listaPermitidos})`);
+        }
+
+        // Construimos la consulta UNION pero filtrando por los tipos permitidos
+        const whereClause = condiciones.length > 0 ? `WHERE ${condiciones.join(' AND ')}` : '';
+
         const query = `
-            SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
-            FROM ${tablaPrincipal} WHERE usuario_id = $1
-            UNION ALL
-            SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
-            FROM acta_epps WHERE usuario_id = $1
-            UNION ALL
-            SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
-            FROM certifi_competencia WHERE usuario_id = $1
+            SELECT d.*, td.nombre as tipo_nombre 
+            FROM (
+                SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at FROM ${tablaPrincipal} WHERE usuario_id = $1
+                UNION ALL
+                SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at FROM acta_epps WHERE usuario_id = $1
+                UNION ALL
+                SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at FROM certifi_competencia WHERE usuario_id = $1
+            ) AS d
+            JOIN tipos_documento td ON d.tipo_documento = td.nombre
+            ${whereClause}
             ORDER BY fecha_documento DESC, created_at DESC`;
             
-        const result = await pool.query(query, [usuarioId]);
+        const result = await pool.query(query, valores);
         res.json(result.rows);
     } catch (err) { 
         res.status(500).json({ error: err.message }); 
     }
 });
-
 
 app.post('/api/subir-empresa', verificarToken, upload.single('archivo'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'El archivo es obligatorio.' });
@@ -784,6 +824,43 @@ app.delete('/api/usuarios/:id', verificarToken, async (req, res) => {
         res.status(500).json({ error: 'Error interno del servidor al eliminar el usuario: ' + err.message });
     }
 });
+
+
+// Obtener todos los tipos de documento para armar el menú de selección
+app.get('/api/tipos-documento', verificarToken, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM tipos_documento ORDER BY nombre ASC');
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+
+// Asignar permisos a un departamento (Solo Talento Humano puede hacerlo)
+app.post('/api/permisos', verificarToken, async (req, res) => {
+  if (req.user.rol !== 'Talento Humano') return res.status(403).json({ error: 'Sin autorización' });
+
+  const { departamento, permisos } = req.body; // permisos es un array de IDs de documento
+
+  try {
+    // 1. Borramos permisos anteriores para actualizar
+    await pool.query('DELETE FROM permisos_departamento WHERE departamento_nombre = $1', [departamento]);
+    
+    // 2. Insertamos los nuevos
+    for (let id_doc of permisos) {
+      await pool.query(
+        'INSERT INTO permisos_departamento (departamento_nombre, tipo_documento_id) VALUES ($1, $2)',
+        [departamento, id_doc]
+      );
+    }
+    res.json({ message: 'Permisos actualizados correctamente' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
