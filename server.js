@@ -94,6 +94,7 @@ const esCorreoValido = (email) => {
     return dominiosPermitidos.includes(dominio);
 };
 
+// 1. Este se queda EXACTAMENTE IGUAL como lo tienes:
 const verificarToken = (req, res, next) => {
     const token = req.header('Authorization');
     if (!token) return res.status(401).json({ error: 'Acceso denegado' });
@@ -101,16 +102,27 @@ const verificarToken = (req, res, next) => {
         const verificado = jwt.verify(token.replace('Bearer ', ''), process.env.JWT_SECRET);
         req.user = verificado;
         next();
-    } catch (err) { res.status(400).json({ error: 'Token no válido' }); }
+    } catch (err) { 
+        res.status(400).json({ error: 'Token no válido' }); 
+    }
 };
 
-const permisoAdminDoc = (req, res, next) => {
-    // Reemplazado 'admin' por 'Talento Humano'
-    if (req.user.rol === 'Talento Humano' || req.user.rol === 'doc' || req.user.rol === 'kelvin') {
-        next();
-    } else {
-        res.status(403).json({ error: 'No tienes permisos' });
-    }
+// 2. REEMPLAZAS tu antiguo 'permisoAdminDoc' por este dinámico:
+const verificarPermisoDocumento = (permisoRequerido) => {
+    return (req, res, next) => {
+        // Talento Humano sigue teniendo acceso universal automático a todo
+        if (req.user.rol === 'Talento Humano') {
+            return next(); 
+        }
+        
+        // Cualquier otro rol (Gerencia, Operaciones, Finanzas, etc.) 
+        // se valida dinámicamente buscando si tiene el permiso en su lista
+        if (req.user.permisos && req.user.permisos.includes(permisoRequerido)) {
+            return next();
+        }
+        
+        return res.status(403).json({ error: `No posees permisos de acceso para la categoría: ${permisoRequerido}` });
+    };
 };
 
 // --- RUTAS ---
@@ -118,28 +130,65 @@ const permisoAdminDoc = (req, res, next) => {
 app.post('/api/login', async (req, res) => {
     const { username, password } = req.body; 
     try {
-        let result = await pool.query('SELECT * FROM usuarios WHERE correo = $1', [username]);
+        // 1. Buscamos primero en la tabla de administradores/departamentos
+        let result = await pool.query('SELECT * FROM usuarios WHERE correo = $1', [username.trim().toLowerCase()]);
         let user = result.rows[0];
         let esPasswordCorrecto = false;
+        let permisosUsuario = [];
 
         if (user) {
             esPasswordCorrecto = (password === user.contrasenia);
+            
+            // Si es Talento Humano, su acceso es universal por defecto
+            if (user.rol === 'Talento Humano') {
+                permisosUsuario = [
+                    'Contratación', 'vacaciones', 'certificados de competencia', 
+                    'actas de epp\'s', 'certificados medicos', 'certificados de aptitud', 
+                    'certificados', 'memorandum', 'certificados y cargas familiares', 'desvinculacion'
+                ];
+            } else {
+                // Si la columna en la BD es un array de Postgres, llega como un Array de JS. 
+                // Nos aseguramos de que si llega null o no es un array, se inicialice vacío de forma segura.
+                permisosUsuario = Array.isArray(user.permisos) ? user.permisos : [];
+            }
         } else {
-            result = await pool.query('SELECT * FROM nomina WHERE username = $1', [username]);
+            // 2. Si no es administrador, buscamos en la tabla nomina por su identificador (correo o cédula)
+            // NOTA: Ajusta 'correo' o 'cedula' según el nombre exacto de tu columna en la tabla nomina
+            result = await pool.query('SELECT * FROM nomina WHERE correo = $1 OR cedula = $1', [username.trim()]);
             user = result.rows[0];
             if (user) {
                 esPasswordCorrecto = (password === user.cedula);
+                permisosUsuario = []; // Los empleados comunes de nómina no administran carpetas documentales
             }
         }
 
+        // Si no existe el usuario en ninguna tabla o la contraseña está mal
         if (!user || !esPasswordCorrecto) {
             return res.status(400).json({ error: 'Credenciales incorrectas' });
         }
 
-        const token = jwt.sign({ id: user.id, rol: user.rol }, process.env.JWT_SECRET, { expiresIn: '8h' });
-        res.json({ token, rol: user.rol, nombre: user.nombre_completo });
+        // Guardamos el ID, Rol y los Permisos Dinámicos dentro del Token para el middleware y el frontend
+        const token = jwt.sign(
+            { 
+                id: user.id, 
+                rol: user.rol || 'Empleado', // Si no tiene rol en nómina, le asignamos uno por defecto
+                permisos: permisosUsuario 
+            }, 
+            process.env.JWT_SECRET, 
+            { expiresIn: '8h' }
+        );
+        
+        // Respondemos al frontend con todo lo necesario
+        res.json({ 
+            token, 
+            rol: user.rol || 'Empleado', 
+            nombre: user.nombre_completo, 
+            permisos: permisosUsuario 
+        });
+
     } catch (err) { 
-        res.status(500).json({ error: err.message }); 
+        console.error("❌ Error en el endpoint de login:", err);
+        res.status(500).json({ error: 'Error interno del servidor: ' + err.message }); 
     }
 });
 
@@ -583,88 +632,48 @@ app.delete('/api/empresa/documentos/:id', verificarToken, async (req, res) => {
 
 // --- CREADOR DE ADMINS ---
 
+// ==========================================
+// 2. REGISTRAR USUARIO (SISTEMA): Guardar permisos seleccionados
+// ==========================================
 app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res) => {
-    // Reemplazado 'admin' por 'Talento Humano'
     if (req.user.rol !== 'Talento Humano') {
-        return res.status(403).json({ error: 'Acción restringida. Solo Talento Humano puede registrar usuarios.' });
+        return res.status(403).json({ error: 'Solo Talento Humano puede registrar usuarios administradores.' });
     }
 
-    let { nombre_completo, cedula, correo, celular, departamento, direccion, contrasenia } = req.body;
-
-    if (!nombre_completo || !cedula || !correo || !celular || !departamento || !direccion || !contrasenia) {
-        return res.status(400).json({ error: 'Todos los campos son obligatorios (incluyendo la Contraseña).' });
+    // Aquí recibimos 'departamento' desde el select del frontend
+    const { cedula, nombre_completo, correo, contrasenia, departamento, permisos } = req.body;
+    
+    // Convertir la cadena de permisos que viene del frontend (ej: "Contratación,vacaciones") a un array de PostgreSQL
+    let arrayPermisos = [];
+    if (permisos) {
+        arrayPermisos = Array.isArray(permisos) ? permisos : permisos.split(',').map(p => p.trim());
     }
-
-    if (!req.file) {
-        return res.status(400).json({ error: 'La foto de perfil es obligatoria. Por favor, suba una imagen.' });
-    }
-
-    nombre_completo = nombre_completo
-        .trim()
-        .split(/\s+/)
-        .map(palabra => palabra.charAt(0).toUpperCase() + palabra.slice(1).toLowerCase())
-        .join(' ');
-
-    const regexSoloNumeros = /^\d{10}$/;
-    if (!regexSoloNumeros.test(cedula.trim())) {
-        return res.status(400).json({ error: 'La cédula de identidad debe contener exactamente 10 dígitos numéricos enteros.' });
-    }
-    if (!regexSoloNumeros.test(celular.trim())) {
-        return res.status(400).json({ error: 'El número de celular debe contener exactamente 10 dígitos numéricos enteros.' });
-    }
-
-    correo = correo.trim().toLowerCase();
-    const dominiosPermitidos = ['gmail.com', 'hotmail.com', 'outlook.com', 'outlook.es'];
-    const correoDominio = correo.split('@')[1];
-
-    if (!correo.includes('@') || !dominiosPermitidos.includes(correoDominio)) {
-        return res.status(400).json({ error: 'El correo electrónico no es válido o no pertenece a un dominio permitido (Gmail, Hotmail, Outlook).' });
-    }
-
-    const fecha_ingreso = new Date();
 
     try {
-        const foto_url = await subirAOneDrive(req.file.buffer, req.file.originalname, 'Fotos_Admins');
-        
-        const query = `
-            INSERT INTO usuarios 
-            (cedula, rol, nombre_completo, correo, celular, foto_url, fecha_ingreso, direccion, contrasenia) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
-            RETURNING id, correo, fecha_ingreso
-        `;
-        
-        const values = [
-            cedula.trim(), 
-            departamento, 
-            nombre_completo, 
-            correo, 
-            celular.trim(), 
-            foto_url, 
-            fecha_ingreso,
-            direccion.trim(),
-            contrasenia 
-        ];
-        
-        const result = await pool.query(query, values);
-        
-        res.status(201).json({ 
-            message: 'Usuario registrado con éxito', 
-            usuario: result.rows[0] 
-        });
-
-    } catch (err) {
-        console.error("Error al registrar usuario:", err);
-        if (err.code === '23505') { 
-            return res.status(400).json({ error: 'La cédula o el correo ya se encuentran registrados.' });
+        let foto_url = null;
+        if (req.file) {
+            foto_url = await subirAOneDrive(req.file.buffer, req.file.originalname, 'Fotos_Usuarios');
         }
-        res.status(500).json({ error: 'Error interno del servidor al guardar el usuario: ' + err.message });
+
+        // Insertamos el usuario vinculando su 'departamento' en la columna 'rol'
+        await pool.query(
+            'INSERT INTO usuarios (cedula, nombre_completo, correo, contrasenia, rol, foto_url, permisos) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+            [cedula, nombre_completo, correo, contrasenia, departamento, foto_url, arrayPermisos]
+        );
+
+        res.json({ message: 'Usuario administrador creado con éxito.' });
+    } catch (err) {
+        console.error("❌ Error al crear usuario:", err);
+        res.status(500).json({ error: 'Error interno del servidor: ' + err.message });
     }
 });
 
-app.get('/api/departamentos', async (req, res) => {
+
+// Ruta asegurada y reutilizada
+app.get('/api/departamentos', verificarToken, async (req, res) => {
     try {
         const result = await pool.query('SELECT id, nombre FROM departamentos ORDER BY nombre ASC');
-        res.json(result.rows);
+        res.json(result.rows); // Esto devuelve un array de objetos: [{id: 1, nombre: "Ventas"}, {id: 2, nombre: "Sistemas"}]
     } catch (err) {
         console.error("❌ Error en el servidor al consultar departamentos:", err);
         res.status(500).json({ error: 'Error interno del servidor al cargar departamentos' });
