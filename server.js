@@ -33,52 +33,68 @@ const msalConfig = {
 const cca = new msal.ConfidentialClientApplication(msalConfig);
 
 // Función auxiliar para subir archivos directos a OneDrive usando Microsoft Graph
+// ✅ FUNCIÓN CORREGIDA Y MEJORADA PARA ONEDRIVE
 async function subirAOneDrive(buffer, originalName, subFolder = '') {
-    const tokenRequest = {
-        scopes: ['https://graph.microsoft.com/.default']
-    };
-    
-    // 1. Obtener Token de Acceso Dinámico
-    const response = await cca.acquireTokenByClientCredential(tokenRequest);
-    const token = response.accessToken;
+    try {
+        const tokenRequest = {
+            scopes: ['https://graph.microsoft.com/.default']
+        };
+        
+        // 1. Obtener Token
+        const response = await cca.acquireTokenByClientCredential(tokenRequest);
+        if (!response || !response.accessToken) {
+            throw new Error("No se pudo obtener token de acceso de Microsoft");
+        }
+        const token = response.accessToken;
 
-    // 2. Limpiar el nombre original de caracteres conflictivos (ej: acentos, comillas de EPP's)
-    const cleanOriginalName = originalName
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "") // Quita acentos
-        .replace(/[^a-zA-Z0-9._-]/g, "_"); // Reemplaza espacios y caracteres raros por '_'
+        // 2. Limpiar nombre
+        const cleanOriginalName = originalName
+            .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+            .replace(/[^a-zA-Z0-9._-]/g, "_");
 
-    const fileName = `${Date.now()}_${cleanOriginalName}`;
-    
-    // 3. Construir los segmentos de la ruta de manera segura
-    let segmentos = ['Documentos Isertel Sistema'];
-    if (subFolder) {
-        segmentos.push(subFolder.normalize("NFD").replace(/[\u0300-\u036f]/g, ""));
+        const fileName = `${Date.now()}_${cleanOriginalName}`;
+        
+        // 3. Construir ruta CORRECTA (aseguramos que no haya espacios ni caracteres raros)
+        let rutaCompleta = 'Documentos_Isertel_Sistema/';
+        if (subFolder) {
+            const subFolderLimpio = subFolder
+                .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+                .replace(/[^a-zA-Z0-9._-]/g, "_");
+            rutaCompleta += `${subFolderLimpio}/`;
+        }
+        rutaCompleta += fileName;
+
+        // 4. CODIFICACIÓN CORRECTA de la ruta para la URL
+        const rutaCodificada = encodeURIComponent(rutaCompleta);
+        
+        // 5. URL CORREGIDA y probada
+        const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/root:/${rutaCodificada}:/content`;
+
+        console.log("🔗 URL de subida:", url); // Para depurar
+
+        const res = await fetch(url, {
+            method: 'PUT',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/octet-stream'
+            },
+            body: buffer
+        });
+
+        // 🚨 DETECCIÓN CLARA DE ERRORES
+        if (!res.ok) {
+            const errText = await res.text();
+            console.error("❌ Error Microsoft Graph:", res.status, errText);
+            throw new Error(`Error OneDrive: ${res.status} - ${errText}`);
+        }
+
+        const driveItem = await res.json();
+        return driveItem["@microsoft.graph.downloadUrl"] || driveItem.webUrl; 
+
+    } catch (err) {
+        console.error("❌ FALLO AL SUBIR A ONEDRIVE:", err.message);
+        throw err; // Mantenemos el error para que el frontend lo reciba
     }
-    segmentos.push(fileName);
-
-    // 4. Codificar CADA segmento por separado y unirlos
-    const encodedPath = segmentos.map(segment => encodeURIComponent(segment.trim())).join('/');
-    
-    // 5. Construir la URL exacta para la API de Graph
-    const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/root:/${encodedPath}:/content`;
-
-    const res = await fetch(url, {
-        method: 'PUT',
-        headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/octet-stream'
-        },
-        body: buffer
-    });
-
-    if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(`Error al subir a OneDrive: ${errText}`);
-    }
-
-    const driveItem = await res.json();
-    return driveItem["@microsoft.graph.downloadUrl"] || driveItem.webUrl; 
 }
 
 // Configuración de Multer para almacenamiento en Memoria (Buffer temporal)
