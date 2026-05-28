@@ -1069,9 +1069,9 @@ app.post('/api/usuario/subir-documento', verificarToken, upload.single('archivo'
 });
 
 /**
- * ✅ LECTURA TOTAL UNIFICADA - CORREGIDA
+ * ✅ LECTURA TOTAL UNIFICADA - CORREGIDA SIN DUPLICADOS
  * Lee de TODAS LAS TABLAS, une todo y filtra por permisos EXACTOS
- * Así se verán: Contratación, Memorándum, Actas de EPP's, Vacaciones, Médicos, etc.
+ * AHORA SIN DUPLICAR LA TABLA DE MÉDICOS
  */
 app.get('/api/usuario/mis-documentos/:id', verificarToken, async (req, res) => {
     console.log("🟢 [LECTURA TOTAL] Usuario:", req.user.nombre, " | Rol/Departamento:", req.user.rol, " | ID Empleado:", req.params.id);
@@ -1113,8 +1113,8 @@ app.get('/api/usuario/mis-documentos/:id', verificarToken, async (req, res) => {
 
         // ==============================================
         // 📃 CONSULTA: LEE Y UNE TODAS LAS TABLAS EXISTENTES
+        // ✅ CORRECCIÓN: ELIMINADA LA SEGUNDA LLAMADA A docus_medicos QUE CAUSABA DUPLICADOS
         // ==============================================
-        // ✅ INCLUYE ABSOLUTAMENTE TODAS LAS TABLAS DONDE GUARDAS DOCUMENTOS
         const consultaFinal = `
             SELECT * FROM (
                 -- Tabla principal
@@ -1151,12 +1151,6 @@ app.get('/api/usuario/mis-documentos/:id', verificarToken, async (req, res) => {
                 SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
                 FROM documentos_pasivos 
                 WHERE usuario_id = $1
-
-                UNION ALL
-                -- Tabla Certificados Médicos (si la usas aparte)
-                SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
-                FROM docus_medicos 
-                WHERE usuario_id = $1
             ) AS todos_los_docs
             -- 👇 FILTRO POR PERMISOS ASIGNADOS
             WHERE 1=1 ${condicionTipo}
@@ -1173,6 +1167,5 @@ app.get('/api/usuario/mis-documentos/:id', verificarToken, async (req, res) => {
         res.status(500).json({ error: "Error al cargar documentos: " + error.message });
     }
 });
-
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
