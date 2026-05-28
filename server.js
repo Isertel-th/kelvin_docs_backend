@@ -4,7 +4,15 @@ const jwt = require('jsonwebtoken');
 const cors = require('cors');
 const multer = require('multer');
 const msal = require('@azure/msal-node');
+const fetch = require('node-fetch'); // ✅ AGREGADO PARA COMPATIBILIDAD
 require('dotenv').config();
+
+
+
+console.log("PUERTO:", process.env.PORT); 
+console.log("DATABASE_URL:", process.env.DATABASE_URL);
+console.log("¿Existe archivo?", require('fs').existsSync('./.env'));
+console.log("VARIABLES:", process.env);
 
 const app = express();
 app.use(express.json());
@@ -1003,6 +1011,162 @@ app.get('/api/mis-tipos-permitidos', verificarToken, async (req, res) => {
     console.error("❌ Error al cargar permisos:", err);
     res.status(500).json({ error: 'No se pudieron cargar los tipos de documento' });
   }
+});
+
+
+// ==================================================
+// ✅ NUEVAS RUTAS PARA TODOS LOS USUARIOS / DEPARTAMENTOS
+// ==================================================
+
+/**
+ * ✅ RUTA DE SUBIDA PARA CUALQUIER USUARIO
+ * Cualquier rol (Gerencia, Finanzas, Sistemas, etc.) puede usar esta ruta
+ * Guarda en la tabla 'documentos' y respeta los permisos
+ */
+app.post('/api/usuario/subir-documento', verificarToken, upload.single('archivo'), async (req, res) => {
+    console.log("🟡 [RUTA - USUARIO SUBE] Solicitud recibida de:", req.user.rol, "ID:", req.user.id);
+
+    // 🔐 Solo verifica que esté logueado, NO BLOQUEA POR ROL
+    if (!req.file) {
+        console.log("🔴 [RUTA - USUARIO SUBE] Error: Sin archivo");
+        return res.status(400).json({ error: 'El archivo es obligatorio.' });
+    }
+
+    const { tipo_documento, subtipo_documento, usuario_id, nombre_user, nombre_archivo, fecha_documento, periodo } = req.body;
+
+    try {
+        console.log("🟡 [RUTA - USUARIO SUBE] Enviando a OneDrive...");
+        // 1. Subir a OneDrive (siempre a la misma cuenta y carpeta según tipo)
+        const url_onedrive = await subirAOneDrive(req.file.buffer, req.file.originalname, tipo_documento);
+        console.log("✅ [RUTA - USUARIO SUBE] Archivo en la nube:", url_onedrive);
+
+        // 2. Guardar en la tabla principal: documentos
+        const queryInsert = `
+            INSERT INTO documentos 
+            (usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `;
+        const valores = [
+            usuario_id, 
+            tipo_documento, 
+            subtipo_documento || 'General / Único', 
+            url_onedrive, 
+            nombre_user, 
+            nombre_archivo, 
+            fecha_documento || null, 
+            periodo || null
+        ];
+
+        await pool.query(queryInsert, valores);
+        console.log("💾 [RUTA - USUARIO SUBE] Guardado en BD correctamente");
+
+        res.json({ success: true, message: 'Documento subido correctamente' });
+
+    } catch (err) {
+        console.error("🔴 [RUTA - USUARIO SUBE] ERROR:", err.message);
+        res.status(500).json({ error: 'Error al procesar: ' + err.message });
+    }
+});
+
+/**
+ * ✅ RUTA DE LISTADO PARA CUALQUIER USUARIO
+ * Devuelve SOLO los documentos que EL DEPARTAMENTO TIENE PERMITIDOS VER
+ * Lee la tabla permisos_departamento automáticamente
+ */
+app.get('/api/usuario/mis-documentos/:id', verificarToken, async (req, res) => {
+    console.log("🟡 [RUTA - USUARIO LISTA] Solicitud de:", req.user.rol, "para usuario ID:", req.params.id);
+    
+    const usuarioId = req.params.id;
+    const rolSolicitante = req.user.rol; // El rol de quien consulta
+
+    try {
+        let condicionPermiso = '';
+        let valores = [usuarioId];
+
+        // 🧠 LÓGICA DE FILTRO:
+        if (rolSolicitante === 'Talento Humano' || rolSolicitante === 'Administrador') {
+            // 🔓 Puede ver TODO
+            condicionPermiso = ''; 
+        } 
+        else if (rolSolicitante === 'doc') {
+            // 🔓 Solo médicos
+            condicionPermiso = `AND d.tipo_documento IN ('Certificados Médicos', 'Certificados de Aptitud')`;
+        } 
+        else if (rolSolicitante === 'kelvin') {
+            // 🔓 Solo técnicos
+            condicionPermiso = `AND d.tipo_documento IN ('Certificado de Competencia', 'Acta de EPP''s')`;
+        } 
+        else {
+            // 🔒 OTROS DEPARTAMENTOS: Consultar tabla de permisos
+            console.log("🔍 [RUTA - USUARIO LISTA] Buscando permisos para:", rolSolicitante);
+            
+            const resPermisos = await pool.query(`
+                SELECT td.nombre 
+                FROM permisos_departamento pd
+                JOIN tipos_documento td ON pd.tipo_documento_id = td.id
+                WHERE pd.departamento_nombre = $1
+            `, [rolSolicitante]);
+
+            if (resPermisos.rows.length === 0) {
+                console.log("⚠️ [RUTA - USUARIO LISTA] Sin permisos asignados");
+                return res.json([]); // Devuelve vacío si no tiene nada asignado
+            }
+
+            const lista = resPermisos.rows.map(p => `'${p.nombre}'`).join(',');
+            condicionPermiso = `AND d.tipo_documento IN (${lista})`;
+            console.log("✅ [RUTA - USUARIO LISTA] Permisos encontrados:", lista);
+        }
+
+        // 📃 CONSULTA UNIFICADA: Busca en todas las tablas donde hay documentos
+        const query = `
+            SELECT d.*, 'documento' as origen 
+            FROM (
+                SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
+                FROM documentos 
+                WHERE usuario_id = $1 ${condicionPermiso}
+                
+                UNION ALL
+                
+                SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
+                FROM documentos_pasivos 
+                WHERE usuario_id = $1 ${condicionPermiso}
+                
+                UNION ALL
+                
+                SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
+                FROM acta_epps 
+                WHERE usuario_id = $1 ${condicionPermiso}
+                
+                UNION ALL
+                
+                SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
+                FROM certifi_competencia 
+                WHERE usuario_id = $1 ${condicionPermiso}
+                
+                UNION ALL
+                
+                SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
+                FROM docus_medicos 
+                WHERE usuario_id = $1 ${condicionPermiso}
+                
+                UNION ALL
+                
+                SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
+                FROM certificados_aptitud 
+                WHERE usuario_id = $1 ${condicionPermiso}
+            ) AS d
+            ORDER BY d.fecha_documento DESC, d.created_at DESC
+        `;
+
+        const resultado = await pool.query(query, valores);
+        console.log(`📄 [RUTA - USUARIO LISTA] Total encontrados: ${resultado.rows.length}`);
+        
+        res.json(resultado.rows);
+
+    } catch (err) {
+        console.error("🔴 [RUTA - USUARIO LISTA] ERROR:", err.message);
+        res.status(500).json({ error: 'Error al cargar lista: ' + err.message });
+    }
 });
 
 const PORT = process.env.PORT || 3000;
