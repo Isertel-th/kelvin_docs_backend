@@ -827,15 +827,22 @@ app.delete('/api/usuarios/:id', verificarToken, async (req, res) => {
 
 
 // Obtener todos los tipos de documento para armar el menú de selección
+// ✅ RUTA CORREGIDA: Solo Administración ve TODOS, los demás NO ven nada aquí
 app.get('/api/tipos-documento', verificarToken, async (req, res) => {
   try {
+    // 🔒 SOLO PERMITIR A ADMINISTRADORES O TALENTO HUMANO
+    if (req.user.rol !== 'Talento Humano' && req.user.rol !== 'Administrador') {
+      // Si NO es admin, devuelve lista VACÍA o error 403
+      return res.json([]); 
+    }
+
+    // Si ES ADMIN, entonces SÍ le muestro todo
     const result = await pool.query('SELECT * FROM tipos_documento ORDER BY nombre ASC');
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
-
 
 
 // Asignar permisos a un departamento (Solo Talento Humano puede hacerlo)
@@ -861,6 +868,51 @@ app.post('/api/permisos', verificarToken, async (req, res) => {
   }
 });
 
+
+
+
+// ✅ NUEVA RUTA: Obtener SOLO los tipos de documento permitidos para EL USUARIO ACTUAL
+app.get('/api/mis-tipos-permitidos', verificarToken, async (req, res) => {
+  const rolUsuario = req.user.rol; // Departamento del usuario logueado
+
+  try {
+    let consulta = '';
+    let valores = [];
+
+    // --------------------------
+    // LÓGICA IGUAL A LA QUE YA TIENES
+    // --------------------------
+    if (rolUsuario === 'Talento Humano' || rolUsuario === 'doc' || rolUsuario === 'kelvin') {
+      // 👤 USUARIOS ESPECIALES: VEN DE TODO
+      if(rolUsuario === 'doc') {
+        // Solo médicos
+        consulta = `SELECT * FROM tipos_documento WHERE nombre IN ('Certificados Médicos', 'Certificados de Aptitud') ORDER BY nombre ASC`;
+      } else if (rolUsuario === 'kelvin') {
+        // Solo técnico
+        consulta = `SELECT * FROM tipos_documento WHERE nombre IN ('Certificado de Competencia', 'Acta de EPP\'s') ORDER BY nombre ASC`;
+      } else {
+        // Talento Humano ve todo
+        consulta = `SELECT * FROM tipos_documento ORDER BY nombre ASC`;
+      }
+    } else {
+      // 🧑‍💼 DEPARTAMENTOS NORMALES: CONSULTA SUS PERMISOS ASIGNADOS
+      consulta = `
+        SELECT td.* 
+        FROM tipos_documento td
+        JOIN permisos_departamento pd ON td.id = pd.tipo_documento_id
+        WHERE pd.departamento_nombre = $1
+        ORDER BY td.nombre ASC
+      `;
+      valores = [rolUsuario];
+    }
+
+    const result = await pool.query(consulta, valores);
+    res.json(result.rows); // Devuelve la lista para llenar el menú
+  } catch (err) {
+    console.error("❌ Error al cargar permisos:", err);
+    res.status(500).json({ error: 'No se pudieron cargar los tipos de documento' });
+  }
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
