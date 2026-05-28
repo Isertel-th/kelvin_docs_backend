@@ -105,12 +105,10 @@ const verificarToken = (req, res, next) => {
 };
 
 const permisoAdminDoc = (req, res, next) => {
-    // Reemplazado 'admin' por 'Talento Humano'
-    if (req.user.rol === 'Talento Humano' || req.user.rol === 'doc' || req.user.rol === 'kelvin') {
-        next();
-    } else {
-        res.status(403).json({ error: 'No tienes permisos' });
-    }
+    // ✅ TODOS LOS USUARIOS PUEDEN VER LAS LISTAS DE EMPLEADOS
+    // Porque todos los usuarios registrados tienen acceso a ver activos y pasivos
+    // La restricción real está dentro de los documentos, no en la lista
+    next(); 
 };
 
 // --- RUTAS ---
@@ -163,6 +161,7 @@ app.delete('/api/admin/documentos/:id', verificarToken, async (req, res) => {
     }
 });
 
+// ✅ Ruta para ver Nómina (Todos pueden entrar ahora)
 app.get('/api/admin/empleados', verificarToken, permisoAdminDoc, async (req, res) => {
     try {
         const result = await pool.query("SELECT * FROM nomina ORDER BY nombre_completo ASC");
@@ -170,6 +169,7 @@ app.get('/api/admin/empleados', verificarToken, permisoAdminDoc, async (req, res
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ✅ Ruta para ver Pasivos (Todos pueden entrar ahora)
 app.get('/api/admin/pasivos', verificarToken, permisoAdminDoc, async (req, res) => {
     try {
         const result = await pool.query("SELECT * FROM pasivos ORDER BY nombre_completo ASC");
