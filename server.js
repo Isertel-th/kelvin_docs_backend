@@ -1083,15 +1083,15 @@ app.get('/api/usuario/mis-documentos/:id', verificarToken, async (req, res) => {
 
     try {
         // ==============================================
-        // 🧠 LÓGICA DE PERMISOS
+        // 🧠 LÓGICA DE PERMISOS - ARREGLAR AQUÍ
         // ==============================================
         if (rolActual === 'Talento Humano' || rolActual === 'Administrador') {
             // 🔓 Acceso total: ve todo
-            condicionTipo = '';
+            condicionTipo = ''; // ✅ DEBE QUEDAR ASÍ, VACÍO
             console.log("✅ Acceso TOTAL");
         } 
         else {
-            // 🔒 Otros roles: solo lo que tiene asignado en permisos_departamento
+            // 🔒 Otros roles: solo lo que tiene asignado
             const permisos = await pool.query(`
                 SELECT td.nombre 
                 FROM permisos_departamento pd
@@ -1104,56 +1104,51 @@ app.get('/api/usuario/mis-documentos/:id', verificarToken, async (req, res) => {
                 return res.json([]);
             }
 
+            // ✅ CAMBIO CRÍTICO: Asegúrate que los nombres coincidan EXACTO
+            // Si usas tildes o mayúsculas, deben ser IGUALES en ambas tablas
             const listaTipos = permisos.rows.map(item => `'${item.nombre}'`).join(',');
             condicionTipo = `AND tipo_documento IN (${listaTipos})`;
             console.log("✅ Tipos permitidos:", listaTipos);
         }
 
+
         // ==============================================
         // 📃 CONSULTA: LEE Y UNE TODAS LAS TABLAS
         // ==============================================
+        // ✅ NUEVA CONSULTA CORREGIDA - CON FILTRO DE PERMISOS
         const consultaFinal = `
             SELECT * FROM (
-                -- 1. TABLA PRINCIPAL (Nuevos archivos: Contratación, Memorándum, etc.)
                 SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
                 FROM documentos 
-                WHERE usuario_id = $1 ${condicionTipo}
+                WHERE usuario_id = $1
 
                 UNION ALL
-
-                -- 2. ACTAS DE EPP'S
                 SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
                 FROM acta_epps 
-                WHERE usuario_id = $1 ${condicionTipo}
+                WHERE usuario_id = $1
 
                 UNION ALL
-
-                -- 3. CERTIFICADOS DE COMPETENCIA
                 SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
                 FROM certifi_competencia 
-                WHERE usuario_id = $1 ${condicionTipo}
+                WHERE usuario_id = $1
 
                 UNION ALL
-
-                -- 4. DOCUMENTOS MÉDICOS
                 SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
                 FROM docus_medicos 
-                WHERE usuario_id = $1 ${condicionTipo}
+                WHERE usuario_id = $1
 
                 UNION ALL
-
-                -- 5. CERTIFICADOS DE APTITUD
                 SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
                 FROM certificados_aptitud 
-                WHERE usuario_id = $1 ${condicionTipo}
+                WHERE usuario_id = $1
 
                 UNION ALL
-
-                -- 6. DOCUMENTOS PASIVOS / VACACIONES / OTROS
                 SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
                 FROM documentos_pasivos 
-                WHERE usuario_id = $1 ${condicionTipo}
+                WHERE usuario_id = $1
             ) AS todos_los_docs
+            -- 👇 AQUÍ AGREGAMOS EL FILTRO QUE FALTABA
+            WHERE 1=1 ${condicionTipo}
             ORDER BY fecha_documento DESC, created_at DESC
         `;
 
@@ -1167,7 +1162,6 @@ app.get('/api/usuario/mis-documentos/:id', verificarToken, async (req, res) => {
         res.status(500).json({ error: "Error al cargar documentos" });
     }
 });
-
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
