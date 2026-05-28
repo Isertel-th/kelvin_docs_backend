@@ -1069,12 +1069,12 @@ app.post('/api/usuario/subir-documento', verificarToken, upload.single('archivo'
 });
 
 /**
- * ✅ LECTURA TOTAL UNIFICADA - TODOS LOS USUARIOS
- * Lee DE TODAS LAS TABLAS, une todo y filtra por permisos
- * Así se verán: Contratación, Memorándum, EPP's, Vacaciones, Médicos, etc.
+ * ✅ LECTURA TOTAL UNIFICADA - CORREGIDA
+ * Lee de TODAS LAS TABLAS, une todo y filtra por permisos EXACTOS
+ * Así se verán: Contratación, Memorándum, Actas de EPP's, Vacaciones, Médicos, etc.
  */
 app.get('/api/usuario/mis-documentos/:id', verificarToken, async (req, res) => {
-    console.log("🟢 [LECTURA TOTAL] Usuario:", req.user.nombre, " | Rol:", req.user.rol, " | ID Empleado:", req.params.id);
+    console.log("🟢 [LECTURA TOTAL] Usuario:", req.user.nombre, " | Rol/Departamento:", req.user.rol, " | ID Empleado:", req.params.id);
 
     const usuarioId = req.params.id;
     const rolActual = req.user.rol;
@@ -1083,15 +1083,15 @@ app.get('/api/usuario/mis-documentos/:id', verificarToken, async (req, res) => {
 
     try {
         // ==============================================
-        // 🧠 LÓGICA DE PERMISOS - ARREGLAR AQUÍ
+        // 🧠 LÓGICA DE PERMISOS - CORREGIDA Y ESTANDARIZADA
         // ==============================================
         if (rolActual === 'Talento Humano' || rolActual === 'Administrador') {
             // 🔓 Acceso total: ve todo
-            condicionTipo = ''; // ✅ DEBE QUEDAR ASÍ, VACÍO
-            console.log("✅ Acceso TOTAL");
+            condicionTipo = '';
+            console.log("✅ Acceso TOTAL concedido");
         } 
         else {
-            // 🔒 Otros roles: solo lo que tiene asignado
+            // 🔒 Otros roles: solo lo que tiene asignado en la tabla de permisos
             const permisos = await pool.query(`
                 SELECT td.nombre 
                 FROM permisos_departamento pd
@@ -1100,54 +1100,65 @@ app.get('/api/usuario/mis-documentos/:id', verificarToken, async (req, res) => {
             `, [rolActual]);
 
             if (permisos.rows.length === 0) {
-                console.log("⚠️ Sin permisos asignados");
+                console.log("⚠️ Sin permisos asignados para:", rolActual);
                 return res.json([]);
             }
 
-            // ✅ CAMBIO CRÍTICO: Asegúrate que los nombres coincidan EXACTO
-            // Si usas tildes o mayúsculas, deben ser IGUALES en ambas tablas
-            const listaTipos = permisos.rows.map(item => `'${item.nombre}'`).join(',');
+            // ✅ ASEGURAMOS QUE LOS NOMBRES COINCIDAN 100% (con comillas si tienen apóstrofo)
+            const listaTipos = permisos.rows.map(item => `'${item.nombre.replace(/'/g, "''")}'`).join(',');
             condicionTipo = `AND tipo_documento IN (${listaTipos})`;
-            console.log("✅ Tipos permitidos:", listaTipos);
+            console.log("✅ Tipos permitidos cargados:", permisos.rows.map(p => p.nombre));
         }
 
 
         // ==============================================
-        // 📃 CONSULTA: LEE Y UNE TODAS LAS TABLAS
+        // 📃 CONSULTA: LEE Y UNE TODAS LAS TABLAS EXISTENTES
         // ==============================================
-        // ✅ NUEVA CONSULTA CORREGIDA - CON FILTRO DE PERMISOS
+        // ✅ INCLUYE ABSOLUTAMENTE TODAS LAS TABLAS DONDE GUARDAS DOCUMENTOS
         const consultaFinal = `
             SELECT * FROM (
+                -- Tabla principal
                 SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
                 FROM documentos 
                 WHERE usuario_id = $1
 
                 UNION ALL
+                -- Tabla Actas de EPP's
                 SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
                 FROM acta_epps 
                 WHERE usuario_id = $1
 
                 UNION ALL
+                -- Tabla Certificados Competencia
                 SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
                 FROM certifi_competencia 
                 WHERE usuario_id = $1
 
                 UNION ALL
+                -- Tabla Documentos Médicos
                 SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
                 FROM docus_medicos 
                 WHERE usuario_id = $1
 
                 UNION ALL
+                -- Tabla Certificados Aptitud
                 SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
                 FROM certificados_aptitud 
                 WHERE usuario_id = $1
 
                 UNION ALL
+                -- Tabla Documentos Pasivos
                 SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
                 FROM documentos_pasivos 
                 WHERE usuario_id = $1
+
+                UNION ALL
+                -- Tabla Certificados Médicos (si la usas aparte)
+                SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
+                FROM docus_medicos 
+                WHERE usuario_id = $1
             ) AS todos_los_docs
-            -- 👇 AQUÍ AGREGAMOS EL FILTRO QUE FALTABA
+            -- 👇 FILTRO POR PERMISOS ASIGNADOS
             WHERE 1=1 ${condicionTipo}
             ORDER BY fecha_documento DESC, created_at DESC
         `;
@@ -1159,7 +1170,7 @@ app.get('/api/usuario/mis-documentos/:id', verificarToken, async (req, res) => {
 
     } catch (error) {
         console.error("🔴 ERROR LECTURA TOTAL:", error.message);
-        res.status(500).json({ error: "Error al cargar documentos" });
+        res.status(500).json({ error: "Error al cargar documentos: " + error.message });
     }
 });
 
