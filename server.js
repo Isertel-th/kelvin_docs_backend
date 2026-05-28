@@ -35,6 +35,9 @@ const cca = new msal.ConfidentialClientApplication(msalConfig);
 // Función auxiliar para subir archivos directos a OneDrive usando Microsoft Graph
 // ✅ FUNCIÓN CORREGIDA Y MEJORADA PARA ONEDRIVE
 async function subirAOneDrive(buffer, originalName, subFolder = '') {
+    // ✅ AQUÍ VA EL LOG, AL INICIO DE LA FUNCIÓN
+    console.log("🟡 [ONEDRIVE] INICIANDO SUBIDA - Archivo:", originalName, " | Carpeta:", subFolder);
+
     try {
         const tokenRequest = {
             scopes: ['https://graph.microsoft.com/.default']
@@ -42,6 +45,8 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
         
         // 1. Obtener Token
         const response = await cca.acquireTokenByClientCredential(tokenRequest);
+        console.log("🔵 [ONEDRIVE] Token obtenido correctamente:", !!response?.accessToken); 
+
         if (!response || !response.accessToken) {
             throw new Error("No se pudo obtener token de acceso de Microsoft");
         }
@@ -54,7 +59,7 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
 
         const fileName = `${Date.now()}_${cleanOriginalName}`;
         
-        // 3. Construir ruta CORRECTA (aseguramos que no haya espacios ni caracteres raros)
+        // 3. Construir ruta CORRECTA
         let rutaCompleta = 'Documentos_Isertel_Sistema/';
         if (subFolder) {
             const subFolderLimpio = subFolder
@@ -64,13 +69,13 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
         }
         rutaCompleta += fileName;
 
-        // 4. CODIFICACIÓN CORRECTA de la ruta para la URL
+        // 4. CODIFICACIÓN CORRECTA
         const rutaCodificada = encodeURIComponent(rutaCompleta);
         
-        // 5. URL CORREGIDA y probada
+        // 5. URL CORREGIDA
         const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/root:/${rutaCodificada}:/content`;
 
-        console.log("🔗 URL de subida:", url); // Para depurar
+        console.log("🔗 URL de subida:", url);
 
         const res = await fetch(url, {
             method: 'PUT',
@@ -80,11 +85,13 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
             },
             body: buffer
         });
+        
+        console.log("🟡 [ONEDRIVE] Respuesta de Microsoft - Estado:", res.status);
 
         // 🚨 DETECCIÓN CLARA DE ERRORES
         if (!res.ok) {
             const errText = await res.text();
-            console.error("❌ Error Microsoft Graph:", res.status, errText);
+            console.error("🔴 [ONEDRIVE] ERROR MICROSOFT:", res.status, " | Detalle:", errText);
             throw new Error(`Error OneDrive: ${res.status} - ${errText}`);
         }
 
@@ -92,8 +99,8 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
         return driveItem["@microsoft.graph.downloadUrl"] || driveItem.webUrl; 
 
     } catch (err) {
-        console.error("❌ FALLO AL SUBIR A ONEDRIVE:", err.message);
-        throw err; // Mantenemos el error para que el frontend lo reciba
+        console.error("🔴 [ONEDRIVE] ERROR TOTAL EN SUBIDA:", err.message);
+        throw err;
     }
 }
 
@@ -370,6 +377,8 @@ app.post('/api/admin/mover-a-pasivo/:id', verificarToken, async (req, res) => {
 });
 
 app.post('/api/admin/subir-a-usuario', verificarToken, permisoAdminDoc, upload.single('archivo'), async (req, res) => {
+    console.log("🟡 [RUTA SUBIR] Usuario conectado - ROL:", req.user.rol, " | ID Usuario:", req.user.id);
+    console.log("🟡 [RUTA SUBIR] Datos recibidos:", req.body.tipo_documento, req.body.usuario_id);
     if (!req.file) return res.status(400).json({ error: 'El archivo es obligatorio.' });
     
     const { tipo_documento, subtipo_documento, usuario_id, nombre_user, es_pasivo, nombre_archivo, fecha_documento, periodo } = req.body;
@@ -390,7 +399,10 @@ app.post('/api/admin/subir-a-usuario', verificarToken, permisoAdminDoc, upload.s
     const estadoUsuario = es_pasivo === 'true' ? 'Pasivo' : 'Active'; // Mapeo dinámico para la nueva columna
 
     try {
+                console.log("🟡 [RUTA SUBIR] Llamando al servicio de OneDrive...");
+
         const url_onedrive = await subirAOneDrive(req.file.buffer, req.file.originalname, tipo_documento);
+        console.log("🟢 [RUTA SUBIR] ÉXITO: Archivo subido, guardando en BD...");
 
         if (tabla === 'acta_epps' || tabla === 'certifi_competencia') {
             await pool.query(
@@ -407,6 +419,9 @@ app.post('/api/admin/subir-a-usuario', verificarToken, permisoAdminDoc, upload.s
         }
         res.json({ message: 'Ok' });
     } catch (err) { 
+
+                console.error("🔴 [RUTA SUBIR] FALLO GENERAL:", err.message);
+
         res.status(500).json({ error: err.message });
     }
 });
@@ -414,6 +429,8 @@ app.post('/api/admin/subir-a-usuario', verificarToken, permisoAdminDoc, upload.s
 // Ejemplo modificado de tu ruta /admin/documentos/:id para que filtre por permisos
 // ✅ RUTA CORREGIDA PARA QUE TODOS VEAN LO SUYO
 app.get('/api/admin/documentos/:id', verificarToken, async (req, res) => {
+        console.log("🟡 [LISTAR] Solicitud de documentos por ROL:", req.user.rol);
+
     const esPasivo = req.query.pasivo === 'true';
     const tablaPrincipal = esPasivo ? 'documentos_pasivos' : 'documentos';
     const usuarioId = req.params.id;
@@ -436,6 +453,9 @@ app.get('/api/admin/documentos/:id', verificarToken, async (req, res) => {
             condiciones.push(`d.tipo_documento IN ('Certificado de Competencia', 'Acta de EPP''s')`);
         } 
         else {
+
+      console.log("🟡 [LISTAR] Consultando permisos para departamento:", rolUsuario);
+
             // 🟢 EL ERROR ESTABA AQUÍ:
             // Consultamos los permisos del departamento del usuario
             const permisos = await pool.query(`
@@ -444,6 +464,8 @@ app.get('/api/admin/documentos/:id', verificarToken, async (req, res) => {
                 JOIN tipos_documento td ON pd.tipo_documento_id = td.id
                 WHERE pd.departamento_nombre = $1
             `, [rolUsuario]);
+
+      console.log("🔵 [LISTAR] Permisos encontrados:", permisos.rows);
 
             if (permisos.rows.length === 0) {
                 return res.json([]); // Si no tiene permisos asignados, vacío
