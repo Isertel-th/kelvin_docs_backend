@@ -97,6 +97,65 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
     }
 }
 
+// ✅ ==== AÑADE ESTA FUNCIÓN NUEVA, ES PARA LEER / LISTAR ====
+async function listarArchivosDeOneDrive(subFolder = '') {
+    try {
+        // 1. Pedimos el mismo permiso y mismo token (es idéntico al de subir)
+        const tokenRequest = {
+            scopes: ['https://graph.microsoft.com/.default']
+        };
+        
+        const response = await cca.acquireTokenByClientCredential(tokenRequest);
+        if (!response || !response.accessToken) {
+            throw new Error("No se pudo obtener token para LEER");
+        }
+        const token = response.accessToken;
+
+        // 2. CONSTRUIMOS LA RUTA EXACTAMENTE IGUAL QUE EN LA OTRA FUNCIÓN
+        // (Es vital que sea igual, limpia, con guiones bajos, para que coincidan las carpetas)
+        let rutaCompleta = 'Documentos_Isertel_Sistema/';
+        if (subFolder) {
+            const subFolderLimpio = subFolder
+                .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+                .replace(/[^a-zA-Z0-9._-]/g, "_");
+            rutaCompleta += `${subFolderLimpio}/`;
+        }
+
+        const rutaCodificada = encodeURIComponent(rutaCompleta);
+
+        // 3. 📌 AQUÍ ESTÁ LA CLAVE:
+        // Usamos SIEMPRE la cuenta de talentohumano, IGUAL QUE EN LA DE SUBIR
+        // Lo único que cambia es el final: /children significa "dime qué hay dentro"
+        const urlLectura = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/root:/${rutaCodificada}:/children`;
+
+        console.log("🔗 URL de LECTURA:", urlLectura);
+
+        // 4. Hacemos la petición de LECTURA (GET, no PUT)
+        const res = await fetch(urlLectura, {
+            method: 'GET', // ⚠️ OJO: Aquí es GET, en la otra era PUT
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+
+        if (!res.ok) {
+            const errText = await res.text();
+            console.error("❌ Error al LEER de OneDrive:", res.status, errText);
+            throw new Error(`Error Lectura: ${res.status}`);
+        }
+
+        const datos = await res.json();
+        // Devolvemos la lista de archivos encontrados
+        return datos.value; 
+
+    } catch (err) {
+        console.error("❌ FALLO AL LEER ARCHIVOS:", err.message);
+        throw err;
+    }
+}
+// ✅ ==== FIN DE LA FUNCIÓN NUEVA ====
+
+
 // Configuración de Multer para almacenamiento en Memoria (Buffer temporal)
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
@@ -353,46 +412,47 @@ app.post('/api/admin/subir-a-usuario', verificarToken, permisoAdminDoc, upload.s
 });
 
 // Ejemplo modificado de tu ruta /admin/documentos/:id para que filtre por permisos
+// ✅ RUTA CORREGIDA PARA QUE TODOS VEAN LO SUYO
 app.get('/api/admin/documentos/:id', verificarToken, async (req, res) => {
     const esPasivo = req.query.pasivo === 'true';
     const tablaPrincipal = esPasivo ? 'documentos_pasivos' : 'documentos';
     const usuarioId = req.params.id;
 
     try {
-        // ✅ CORRECCIÓN PRINCIPAL: Ya NO consultas nada a la BD
-        // Usas DIRECTAMENTE el rol del usuario que tiene la sesión iniciada
         const rolUsuario = req.user.rol;
-
         let condiciones = [];
         const valores = [usuarioId];
 
-        if (rolUsuario === 'Talento Humano' || rolUsuario === 'doc' || rolUsuario === 'kelvin') {
-            if(rolUsuario === 'doc') {
-                condiciones.push(`d.tipo_documento IN ('Certificados Médicos', 'Certificados de Aptitud')`);
-            } else if (rolUsuario === 'kelvin') {
-                condiciones.push(`d.tipo_documento IN ('Certificado de Competencia', 'Acta de EPP''s')`);
-            }
-            // Si es Talento Humano: NO agrega condiciones, ve todo
-        } else {
-            // 🆕 MAGIA PARA OTROS DEPARTAMENTOS (FINANCIERO, SISTEMAS, ETC.)
-            // Consulta permisos SEGÚN TU ROL DE SESIÓN
+        // 🟢 LÓGICA DE PERMISOS MEJORADA
+        if (rolUsuario === 'Talento Humano' || rolUsuario === 'Administrador') {
+            // Ve todo
+        } 
+        else if (rolUsuario === 'doc') {
+            // Solo documentos médicos
+            condiciones.push(`d.tipo_documento IN ('Certificados Médicos', 'Certificados de Aptitud')`);
+        } 
+        else if (rolUsuario === 'kelvin') {
+            // Solo documentos técnicos
+            condiciones.push(`d.tipo_documento IN ('Certificado de Competencia', 'Acta de EPP''s')`);
+        } 
+        else {
+            // 🟢 EL ERROR ESTABA AQUÍ:
+            // Consultamos los permisos del departamento del usuario
             const permisos = await pool.query(`
                 SELECT td.nombre 
                 FROM permisos_departamento pd
                 JOIN tipos_documento td ON pd.tipo_documento_id = td.id
                 WHERE pd.departamento_nombre = $1
-            `, [rolUsuario]); // 👈 Aquí también usa el rol de sesión
+            `, [rolUsuario]);
+
+            if (permisos.rows.length === 0) {
+                return res.json([]); // Si no tiene permisos asignados, vacío
+            }
 
             const listaPermitidos = permisos.rows.map(p => `'${p.nombre}'`).join(',');
-            
-            if(!listaPermitidos) {
-                return res.json([]); // No tiene permisos asignados
-            }
             condiciones.push(`d.tipo_documento IN (${listaPermitidos})`);
-            // 👆 Corregí aquí tu código original: usabas td.nombre, debe ser d.tipo_documento
         }
 
-        // Construimos la consulta con tu estructura exacta
         const whereClause = condiciones.length > 0 ? `WHERE ${condiciones.join(' AND ')}` : '';
 
         const query = `
@@ -408,8 +468,9 @@ app.get('/api/admin/documentos/:id', verificarToken, async (req, res) => {
             ORDER BY fecha_documento DESC, created_at DESC`;
             
         const result = await pool.query(query, valores);
-        res.json(result.rows);
+        res.json(result.rows); // 👈 Aquí devuelve la lista con los enlaces de OneDrive
     } catch (err) { 
+        console.error("❌ Error al cargar documentos:", err);
         res.status(500).json({ error: err.message }); 
     }
 });
