@@ -1069,105 +1069,73 @@ app.post('/api/usuario/subir-documento', verificarToken, upload.single('archivo'
 });
 
 /**
- * ✅ RUTA DE LISTADO PARA CUALQUIER USUARIO
- * Devuelve SOLO los documentos que EL DEPARTAMENTO TIENE PERMITIDOS VER
- * Lee la tabla permisos_departamento automáticamente
+ * ✅ RUTA UNIFICADA DE LECTURA - TODOS LOS USUARIOS
+ * TODOS leen la MISMA TABLA: "documentos"
+ * Solo filtra qué TIPOS DE DOCUMENTOS puede ver cada rol
  */
 app.get('/api/usuario/mis-documentos/:id', verificarToken, async (req, res) => {
-    console.log("🟡 [RUTA - USUARIO LISTA] Solicitud de:", req.user.rol, "para usuario ID:", req.params.id);
-    
+    console.log("🟢 [LECTURA UNIFICADA] Usuario:", req.user.nombre, " | Rol:", req.user.rol, " | ID Empleado:", req.params.id);
+
     const usuarioId = req.params.id;
-    const rolSolicitante = req.user.rol; // El rol de quien consulta
+    const rolActual = req.user.rol; // Rol de quien está entrando al sistema
+    let condicionTipo = '';
+    let valores = [usuarioId];
 
     try {
-        let condicionPermiso = '';
-        let valores = [usuarioId];
-
-        // 🧠 LÓGICA DE FILTRO:
-        if (rolSolicitante === 'Talento Humano' || rolSolicitante === 'Administrador') {
-            // 🔓 Puede ver TODO
-            condicionPermiso = ''; 
-        } 
-        else if (rolSolicitante === 'doc') {
-            // 🔓 Solo médicos
-            condicionPermiso = `AND d.tipo_documento IN ('Certificados Médicos', 'Certificados de Aptitud')`;
-        } 
-        else if (rolSolicitante === 'kelvin') {
-            // 🔓 Solo técnicos
-            condicionPermiso = `AND d.tipo_documento IN ('Certificado de Competencia', 'Acta de EPP''s')`;
+        // ==============================================
+        // 🧠 LÓGICA DE PERMISOS: QUÉ PUEDE VER CADA ROL
+        // ==============================================
+        if (rolActual === 'Talento Humano' || rolActual === 'Administrador') {
+            // 🔓 PUEDE VER TODO: TODOS los tipos de documento
+            condicionTipo = ''; 
+            console.log("✅ Acceso TOTAL - Verá todo");
         } 
         else {
-            // 🔒 OTROS DEPARTAMENTOS: Consultar tabla de permisos
-            console.log("🔍 [RUTA - USUARIO LISTA] Buscando permisos para:", rolSolicitante);
-            
-            const resPermisos = await pool.query(`
+            // 🔒 OTROS ROLES: Solo verán lo que tengan asignado en la tabla permisos_departamento
+            console.log("🔍 Buscando permisos para el rol/departamento:", rolActual);
+
+            // Consultamos qué tipos de documento tiene permitido ver este departamento
+            const permisos = await pool.query(`
                 SELECT td.nombre 
                 FROM permisos_departamento pd
                 JOIN tipos_documento td ON pd.tipo_documento_id = td.id
                 WHERE pd.departamento_nombre = $1
-            `, [rolSolicitante]);
+            `, [rolActual]);
 
-            if (resPermisos.rows.length === 0) {
-                console.log("⚠️ [RUTA - USUARIO LISTA] Sin permisos asignados");
-                return res.json([]); // Devuelve vacío si no tiene nada asignado
+            if (permisos.rows.length === 0) {
+                console.log("⚠️ SIN PERMISOS ASIGNADOS - No verá nada");
+                return res.json([]); // Devuelve vacío
             }
 
-            const lista = resPermisos.rows.map(p => `'${p.nombre}'`).join(',');
-            condicionPermiso = `AND d.tipo_documento IN (${lista})`;
-            console.log("✅ [RUTA - USUARIO LISTA] Permisos encontrados:", lista);
+            // Creamos la condición: SOLO esos tipos de documento
+            const listaTipos = permisos.rows.map(item => `'${item.nombre}'`).join(',');
+            condicionTipo = `AND tipo_documento IN (${listaTipos})`;
+
+            console.log("✅ Tipos permitidos:", listaTipos);
         }
 
-        // 📃 CONSULTA UNIFICADA: Busca en todas las tablas donde hay documentos
-        const query = `
-            SELECT d.*, 'documento' as origen 
-            FROM (
-                SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
-                FROM documentos 
-                WHERE usuario_id = $1 ${condicionPermiso}
-                
-                UNION ALL
-                
-                SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
-                FROM documentos_pasivos 
-                WHERE usuario_id = $1 ${condicionPermiso}
-                
-                UNION ALL
-                
-                SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
-                FROM acta_epps 
-                WHERE usuario_id = $1 ${condicionPermiso}
-                
-                UNION ALL
-                
-                SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
-                FROM certifi_competencia 
-                WHERE usuario_id = $1 ${condicionPermiso}
-                
-                UNION ALL
-                
-                SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
-                FROM docus_medicos 
-                WHERE usuario_id = $1 ${condicionPermiso}
-                
-                UNION ALL
-                
-                SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
-                FROM certificados_aptitud 
-                WHERE usuario_id = $1 ${condicionPermiso}
-            ) AS d
-            ORDER BY d.fecha_documento DESC, d.created_at DESC
+        // ==============================================
+        // 📃 CONSULTA: TODOS CONSULTAN LA MISMA TABLA
+        // ==============================================
+        // TODOS: Administrador, Talento Humano, Logística, Finanzas, etc.
+        // TODOS leen DE LA MISMA TABLA: "documentos"
+        const consultaFinal = `
+            SELECT * 
+            FROM documentos 
+            WHERE usuario_id = $1 
+            ${condicionTipo}
+            ORDER BY fecha_documento DESC, created_at DESC
         `;
 
-        const resultado = await pool.query(query, valores);
-        console.log(`📄 [RUTA - USUARIO LISTA] Total encontrados: ${resultado.rows.length}`);
-        
+        const resultado = await pool.query(consultaFinal, valores);
+
+        console.log(`📄 Total documentos encontrados: ${resultado.rows.length}`);
         res.json(resultado.rows);
 
-    } catch (err) {
-        console.error("🔴 [RUTA - USUARIO LISTA] ERROR:", err.message);
-        res.status(500).json({ error: 'Error al cargar lista: ' + err.message });
+    } catch (error) {
+        console.error("🔴 ERROR EN LECTURA UNIFICADA:", error.message);
+        res.status(500).json({ error: "Error al cargar documentos" });
     }
 });
-
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
