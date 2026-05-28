@@ -681,24 +681,30 @@ app.get('/api/departamentos', verificarToken, async (req, res) => {
 });
 
 app.get('/api/usuarios', verificarToken, async (req, res) => {
-    // Reemplazado 'admin' por 'Talento Humano'
-    if (req.user.rol !== 'Talento Humano') {
-        return res.status(403).json({ error: 'Acción restringida. Solo Talento Humano puede ver esta lista.' });
-    }
-
+    // ❌ ELIMINADO: if (req.user.rol !== 'Talento Humano') { ... }
+    // Ahora cualquier usuario autenticado de Isertel puede consultar la lista
     try {
-        const query = `
-            SELECT id, foto_url, nombre_completo, cedula, correo, celular, rol, fecha_ingreso 
-            FROM usuarios 
-            ORDER BY fecha_ingreso DESC
-        `;
-        const result = await pool.query(query);
+        const result = await pool.query('SELECT id, cedula, nombre_completo, correo, celular, rol, foto_url FROM nomina ORDER BY nombre_completo ASC');
         res.json(result.rows);
     } catch (err) {
-        console.error("❌ Error en el servidor al consultar usuarios:", err);
-        res.status(500).json({ error: 'Error interno del servidor al cargar el listado de usuarios' });
+        console.error("❌ Error al obtener nómina activa:", err);
+        res.status(500).json({ error: 'Error interno del servidor' });
     }
 });
+
+app.get('/api/pasivos', verificarToken, async (req, res) => {
+    // ❌ ELIMINADO: if (req.user.rol !== 'Talento Humano') { ... }
+    try {
+        const result = await pool.query('SELECT id, cedula, nombre_completo, correo, celular, motivo_salida FROM pasivos ORDER BY nombre_completo ASC');
+        res.json(result.rows);
+    } catch (err) {
+        console.error("❌ Error al obtener personal pasivo:", err);
+        res.status(500).json({ error: 'Error interno del servidor' });
+    }
+});
+
+
+
 
 app.put('/api/usuarios/:id', verificarToken, upload.single('foto'), async (req, res) => {
     // Reemplazado 'admin' por 'Talento Humano'
