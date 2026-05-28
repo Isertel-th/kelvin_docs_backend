@@ -212,7 +212,8 @@ app.delete('/api/admin/documentos/:id', verificarToken, async (req, res) => {
     }
 });
 
-app.get('/api/admin/empleados', verificarToken, permisoAdminDoc, async (req, res) => {
+// Busca la línea 215 y cámbiala para que use el nuevo middleware dinámico:
+app.get('/api/admin/empleados', verificarToken, verificarPermisoDocumento('Contratación'), async (req, res) => {
     try {
         const result = await pool.query("SELECT * FROM nomina ORDER BY nombre_completo ASC");
         res.json(result.rows);
