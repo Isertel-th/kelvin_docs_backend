@@ -341,48 +341,46 @@ app.get('/api/admin/documentos/:id', verificarToken, async (req, res) => {
     const esPasivo = req.query.pasivo === 'true';
     const tablaPrincipal = esPasivo ? 'documentos_pasivos' : 'documentos';
     const usuarioId = req.params.id;
-    const rolUsuario = req.user.rol; // El rol/departamento del usuario que inició sesión
 
     try {
-        let consultaPermitida = '';
-        let joinTabla = '';
-        let condiciones = [];
-        let valores = [usuarioId];
+        // ✅ CORRECCIÓN PRINCIPAL: Ya NO consultas nada a la BD
+        // Usas DIRECTAMENTE el rol del usuario que tiene la sesión iniciada
+        const rolUsuario = req.user.rol;
 
-        // --------------------------
-        // LÓGICA DE PERMISOS
-        // --------------------------
+        let condiciones = [];
+        const valores = [usuarioId];
+
         if (rolUsuario === 'Talento Humano' || rolUsuario === 'doc' || rolUsuario === 'kelvin') {
-            // Accesos totales o especiales como ya los tenías definidos
             if(rolUsuario === 'doc') {
-                condiciones.push(`td.nombre IN ('Certificados Médicos', 'Certificados de Aptitud')`);
+                condiciones.push(`d.tipo_documento IN ('Certificados Médicos', 'Certificados de Aptitud')`);
             } else if (rolUsuario === 'kelvin') {
-                condiciones.push(`td.nombre IN ('Certificados de Competencia', 'Actas de EPP''s')`);
+                condiciones.push(`d.tipo_documento IN ('Certificado de Competencia', 'Acta de EPP''s')`);
             }
-            // Si es Talento Humano, no agrega WHERE, ve todo
+            // Si es Talento Humano: NO agrega condiciones, ve todo
         } else {
-            // 🆕 AQUÍ LA MAGIA PARA NUEVOS DEPARTAMENTOS
-            // Consultamos qué tipos de documento tiene permitido ver ESTE ROL
+            // 🆕 MAGIA PARA OTROS DEPARTAMENTOS (FINANCIERO, SISTEMAS, ETC.)
+            // Consulta permisos SEGÚN TU ROL DE SESIÓN
             const permisos = await pool.query(`
                 SELECT td.nombre 
                 FROM permisos_departamento pd
                 JOIN tipos_documento td ON pd.tipo_documento_id = td.id
                 WHERE pd.departamento_nombre = $1
-            `, [rolUsuario]);
+            `, [rolUsuario]); // 👈 Aquí también usa el rol de sesión
 
             const listaPermitidos = permisos.rows.map(p => `'${p.nombre}'`).join(',');
             
             if(!listaPermitidos) {
-                return res.json([]); // No tiene permisos, devuelve vacío
+                return res.json([]); // No tiene permisos asignados
             }
-            condiciones.push(`td.nombre IN (${listaPermitidos})`);
+            condiciones.push(`d.tipo_documento IN (${listaPermitidos})`);
+            // 👆 Corregí aquí tu código original: usabas td.nombre, debe ser d.tipo_documento
         }
 
-        // Construimos la consulta UNION pero filtrando por los tipos permitidos
+        // Construimos la consulta con tu estructura exacta
         const whereClause = condiciones.length > 0 ? `WHERE ${condiciones.join(' AND ')}` : '';
 
         const query = `
-            SELECT d.*, td.nombre as tipo_nombre 
+            SELECT d.*
             FROM (
                 SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at FROM ${tablaPrincipal} WHERE usuario_id = $1
                 UNION ALL
@@ -390,7 +388,6 @@ app.get('/api/admin/documentos/:id', verificarToken, async (req, res) => {
                 UNION ALL
                 SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at FROM certifi_competencia WHERE usuario_id = $1
             ) AS d
-            JOIN tipos_documento td ON d.tipo_documento = td.nombre
             ${whereClause}
             ORDER BY fecha_documento DESC, created_at DESC`;
             
@@ -873,29 +870,24 @@ app.post('/api/permisos', verificarToken, async (req, res) => {
 
 // ✅ NUEVA RUTA: Obtener SOLO los tipos de documento permitidos para EL USUARIO ACTUAL
 app.get('/api/mis-tipos-permitidos', verificarToken, async (req, res) => {
-  const rolUsuario = req.user.rol; // Departamento del usuario logueado
+  // ✅ SIEMPRE: ROL DEL USUARIO QUE INICIÓ SESIÓN
+  const rolUsuario = req.user.rol; 
 
   try {
     let consulta = '';
     let valores = [];
 
-    // --------------------------
-    // LÓGICA IGUAL A LA QUE YA TIENES
-    // --------------------------
-    if (rolUsuario === 'Talento Humano' || rolUsuario === 'doc' || rolUsuario === 'kelvin') {
-      // 👤 USUARIOS ESPECIALES: VEN DE TODO
-      if(rolUsuario === 'doc') {
-        // Solo médicos
-        consulta = `SELECT * FROM tipos_documento WHERE nombre IN ('Certificados Médicos', 'Certificados de Aptitud') ORDER BY nombre ASC`;
-      } else if (rolUsuario === 'kelvin') {
-        // Solo técnico
-        consulta = `SELECT * FROM tipos_documento WHERE nombre IN ('Certificado de Competencia', 'Acta de EPP\'s') ORDER BY nombre ASC`;
-      } else {
-        // Talento Humano ve todo
-        consulta = `SELECT * FROM tipos_documento ORDER BY nombre ASC`;
-      }
-    } else {
-      // 🧑‍💼 DEPARTAMENTOS NORMALES: CONSULTA SUS PERMISOS ASIGNADOS
+    if (rolUsuario === 'Talento Humano' || rolUsuario === 'Administrador') {
+      consulta = `SELECT * FROM tipos_documento ORDER BY nombre ASC`;
+    } 
+    else if (rolUsuario === 'doc') {
+      consulta = `SELECT * FROM tipos_documento WHERE nombre IN ('Certificados Médicos', 'Certificados de Aptitud') ORDER BY nombre ASC`;
+    } 
+    else if (rolUsuario === 'kelvin') {
+      consulta = `SELECT * FROM tipos_documento WHERE nombre IN ('Certificado de Competencia', 'Acta de EPP\'s') ORDER BY nombre ASC`;
+    } 
+    else {
+      // 🟢 ESTA ES LA MEJORA: Busca en la tabla de permisos LO QUE CORRESPONDE A TU DEPARTAMENTO
       consulta = `
         SELECT td.* 
         FROM tipos_documento td
@@ -903,11 +895,11 @@ app.get('/api/mis-tipos-permitidos', verificarToken, async (req, res) => {
         WHERE pd.departamento_nombre = $1
         ORDER BY td.nombre ASC
       `;
-      valores = [rolUsuario];
+      valores = [rolUsuario]; // <-- TU DEPARTAMENTO
     }
 
     const result = await pool.query(consulta, valores);
-    res.json(result.rows); // Devuelve la lista para llenar el menú
+    res.json(result.rows);
   } catch (err) {
     console.error("❌ Error al cargar permisos:", err);
     res.status(500).json({ error: 'No se pudieron cargar los tipos de documento' });
