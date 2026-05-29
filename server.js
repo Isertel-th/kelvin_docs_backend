@@ -980,12 +980,12 @@ app.post('/api/permisos', verificarToken, async (req, res) => {
     await pool.query('DELETE FROM permisos_departamento WHERE departamento_nombre = $1', [departamento]);
     
     // 2. Insertamos los nuevos
-    for (let id_doc of permisos) {
-      await pool.query(
-        'INSERT INTO permisos_departamento (departamento_nombre, tipo_documento_id) VALUES ($1, $2)',
-        [departamento, id_doc]
-      );
-    }
+for (let id_doc of permisosSeleccionados) {
+  await pool.query(
+    'INSERT INTO permisos_usuario (usuario_id, tipo_documento_id) VALUES ($1, $2)',
+    [resultado.rows[0].id, id_doc] // <-- USAMOS EL ID DEL USUARIO RECIÉN CREADO
+  );
+}
     res.json({ message: 'Permisos actualizados correctamente' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1217,9 +1217,12 @@ app.get('/api/usuarios/:id/permisos', verificarToken, async (req, res) => {
       JOIN tipos_documento td ON pu.tipo_documento_id = td.id
       WHERE pu.usuario_id = $1
     `, [req.params.id]);
-    res.json(result.rows);
+    
+    // ✅ Si no hay permisos, devuelve array vacío
+    res.json(result.rows || []);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("❌ Error al cargar permisos:", err); // <-- Agregamos log para ver el error real
+    res.status(200).json([]); // ✅ Devuelve vacío en vez de error 500
   }
 });
 
