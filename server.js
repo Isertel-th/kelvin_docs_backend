@@ -1093,38 +1093,37 @@ app.post('/api/usuario/subir-documento', verificarToken, upload.single('archivo'
  * Lee de TODAS LAS TABLAS, une todo y filtra por permisos EXACTOS
  * AHORA SIN DUPLICAR LA TABLA DE MÉDICOS
  */
+// ✅ ACTUALIZAR TU RUTA DE OBTENER DOCUMENTOS PARA QUE USE PERMISOS DE USUARIO (no solo departamento)
 app.get('/api/usuario/mis-documentos/:id', verificarToken, async (req, res) => {
     console.log("🟢 [LECTURA TOTAL] Usuario:", req.user.nombre, " | Rol/Departamento:", req.user.rol, " | ID Empleado:", req.params.id);
 
     const usuarioId = req.params.id;
-    const rolActual = req.user.rol;
+    const usuarioSesionId = req.user.id; // ID del usuario que está consultando
     let condicionTipo = '';
     let valores = [usuarioId];
 
     try {
         // ==============================================
-        // 🧠 LÓGICA DE PERMISOS - CORREGIDA Y ESTANDARIZADA
+        // 🧠 LÓGICA DE PERMISOS - AHORA POR USUARIO
         // ==============================================
-        if (rolActual === 'Talento Humano' || rolActual === 'Administrador') {
-            // 🔓 Acceso total: ve todo
+        if (req.user.rol === 'Talento Humano' || req.user.rol === 'Administrador') {
             condicionTipo = '';
             console.log("✅ Acceso TOTAL concedido");
         } 
         else {
-            // 🔒 Otros roles: solo lo que tiene asignado en la tabla de permisos
+            // 🆕 AHORA BUSCAMOS PERMISOS ASIGNADOS AL USUARIO
             const permisos = await pool.query(`
                 SELECT td.nombre 
-                FROM permisos_departamento pd
-                JOIN tipos_documento td ON pd.tipo_documento_id = td.id
-                WHERE pd.departamento_nombre = $1
-            `, [rolActual]);
+                FROM permisos_usuario pu
+                JOIN tipos_documento td ON pu.tipo_documento_id = td.id
+                WHERE pu.usuario_id = $1
+            `, [usuarioSesionId]);
 
             if (permisos.rows.length === 0) {
-                console.log("⚠️ Sin permisos asignados para:", rolActual);
+                console.log("⚠️ Sin permisos asignados para este usuario");
                 return res.json([]);
             }
 
-            // ✅ ASEGURAMOS QUE LOS NOMBRES COINCIDAN 100% (con comillas si tienen apóstrofo)
             const listaTipos = permisos.rows.map(item => `'${item.nombre.replace(/'/g, "''")}'`).join(',');
             condicionTipo = `AND tipo_documento IN (${listaTipos})`;
             console.log("✅ Tipos permitidos cargados:", permisos.rows.map(p => p.nombre));
@@ -1206,6 +1205,46 @@ app.get('/api/imagen/:id', async (req, res) => {
         res.redirect('https://via.placeholder.com/150');
     }
 });
+
+
+// ✅ NUEVA RUTA: Obtener permisos ESPECÍFICOS de UN USUARIO
+app.get('/api/usuarios/:id/permisos', verificarToken, async (req, res) => {
+  if (req.user.rol !== 'Talento Humano') return res.status(403).json({ error: 'Sin autorización' });
+  try {
+    const result = await pool.query(`
+      SELECT td.id, td.nombre
+      FROM permisos_usuario pu
+      JOIN tipos_documento td ON pu.tipo_documento_id = td.id
+      WHERE pu.usuario_id = $1
+    `, [req.params.id]);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ✅ NUEVA RUTA: ACTUALIZAR permisos de un usuario
+app.put('/api/usuarios/:id/permisos', verificarToken, async (req, res) => {
+  if (req.user.rol !== 'Talento Humano') return res.status(403).json({ error: 'Sin autorización' });
+  const { permisos } = req.body; // array de IDs de documentos
+  const usuarioId = req.params.id;
+
+  try {
+    // Borrar permisos anteriores
+    await pool.query('DELETE FROM permisos_usuario WHERE usuario_id = $1', [usuarioId]);
+    // Insertar nuevos
+    for (let id_doc of permisos) {
+      await pool.query(
+        'INSERT INTO permisos_usuario (usuario_id, tipo_documento_id) VALUES ($1, $2)',
+        [usuarioId, id_doc]
+      );
+    }
+    res.json({ message: 'Permisos actualizados correctamente' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
