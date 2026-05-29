@@ -870,15 +870,15 @@ app.get('/api/usuarios', verificarToken, async (req, res) => {
 });
 
 app.put('/api/usuarios/:id', verificarToken, upload.single('foto'), async (req, res) => {
-    // Reemplazado 'admin' por 'Talento Humano'
     if (req.user.rol !== 'Talento Humano') {
         return res.status(403).json({ error: 'Acción restringida. Solo Talento Humano puede editar colaboradores.' });
     }
 
     const usuarioId = req.params.id;
-    let { nombre_completo, cedula, correo, celular, direccion, rol, contrasenia } = req.body;
+    let { nombre_completo, cedula, correo, celular, rol, contrasenia } = req.body; // ❌ QUITADO direccion
 
-    if (!nombre_completo || !cedula || !correo || !celular || !direccion || !rol) {
+    // ✅ AHORA YA NO EXIGES DIRECCIÓN
+    if (!nombre_completo || !cedula || !correo || !celular || !rol) {
         return res.status(400).json({ error: 'Todos los campos base son obligatorios para guardar la edición.' });
     }
 
@@ -898,6 +898,7 @@ app.put('/api/usuarios/:id', verificarToken, upload.single('foto'), async (req, 
             passwordFinal = contrasenia; 
         }
 
+        // ✅ QUITADO direccion DE LA CONSULTA
         const queryUpdate = `
             UPDATE usuarios 
             SET cedula = $1, 
@@ -906,12 +907,12 @@ app.put('/api/usuarios/:id', verificarToken, upload.single('foto'), async (req, 
                 correo = $4, 
                 celular = $5, 
                 foto_url = $6, 
-                direccion = $7, 
-                contrasenia = $8
-            WHERE id = $9
+                contrasenia = $7
+            WHERE id = $8
             RETURNING id, nombre_completo, correo, rol
         `;
 
+        // ✅ QUITADO EL VALOR DE direccion
         const values = [
             cedula.trim(),
             rol.trim(), 
@@ -919,7 +920,6 @@ app.put('/api/usuarios/:id', verificarToken, upload.single('foto'), async (req, 
             correo.trim().toLowerCase(),
             celular.trim(),
             foto_url,
-            direccion.trim(),
             passwordFinal,
             usuarioId
         ];
