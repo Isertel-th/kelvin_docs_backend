@@ -43,7 +43,6 @@ const cca = new msal.ConfidentialClientApplication(msalConfig);
 // Función auxiliar para subir archivos directos a OneDrive usando Microsoft Graph
 // ✅ FUNCIÓN CORREGIDA Y MEJORADA PARA ONEDRIVE
 async function subirAOneDrive(buffer, originalName, subFolder = '') {
-    // ✅ AQUÍ VA EL LOG, AL INICIO DE LA FUNCIÓN
     console.log("🟡 [ONEDRIVE] INICIANDO SUBIDA - Archivo:", originalName, " | Carpeta:", subFolder);
 
     try {
@@ -51,7 +50,6 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
             scopes: ['https://graph.microsoft.com/.default']
         };
         
-        // 1. Obtener Token
         const response = await cca.acquireTokenByClientCredential(tokenRequest);
         console.log("🔵 [ONEDRIVE] Token obtenido correctamente:", !!response?.accessToken); 
 
@@ -60,14 +58,12 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
         }
         const token = response.accessToken;
 
-        // 2. Limpiar nombre
         const cleanOriginalName = originalName
             .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
             .replace(/[^a-zA-Z0-9._-]/g, "_");
 
         const fileName = `${Date.now()}_${cleanOriginalName}`;
         
-        // 3. Construir ruta CORRECTA
         let rutaCompleta = 'Documentos_Isertel_Sistema/';
         if (subFolder) {
             const subFolderLimpio = subFolder
@@ -77,10 +73,8 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
         }
         rutaCompleta += fileName;
 
-        // 4. CODIFICACIÓN CORRECTA
         const rutaCodificada = encodeURIComponent(rutaCompleta);
         
-        // 5. URL CORREGIDA
         const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/root:/${rutaCodificada}:/content`;
 
         console.log("🔗 URL de subida:", url);
@@ -96,7 +90,6 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
         
         console.log("🟡 [ONEDRIVE] Respuesta de Microsoft - Estado:", res.status);
 
-        // 🚨 DETECCIÓN CLARA DE ERRORES
         if (!res.ok) {
             const errText = await res.text();
             console.error("🔴 [ONEDRIVE] ERROR MICROSOFT:", res.status, " | Detalle:", errText);
@@ -104,7 +97,37 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
         }
 
         const driveItem = await res.json();
-        return driveItem["@microsoft.graph.downloadUrl"] || driveItem.webUrl; 
+        const archivoId = driveItem.id; // 📌 Guardamos el ID del archivo recién subido
+
+        // ==================================================
+        // ✅ NUEVO: CREAR ENLACE PÚBLICO PERMANENTE
+        // ==================================================
+        const urlPermisos = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/items/${archivoId}/createLink`;
+        
+        const resEnlace = await fetch(urlPermisos, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                type: "view",       // Tipo: solo ver
+                scope: "anonymous"  // Alcance: cualquiera con el enlace puede ver
+            })
+        });
+
+        if (!resEnlace.ok) {
+            const errText = await resEnlace.text();
+            console.error("🔴 [ONEDRIVE] ERROR AL CREAR ENLACE:", resEnlace.status, errText);
+            // Si falla, devolvemos el temporal, pero avisamos
+            return driveItem["@microsoft.graph.downloadUrl"];
+        }
+
+        const datosEnlace = await resEnlace.json();
+        const enlacePermanente = datosEnlace.link.webUrl;
+
+        console.log("✅ [ONEDRIVE] ENLACE PERMANENTE CREADO:", enlacePermanente);
+        return enlacePermanente; // 📌 AHORA GUARDAMOS EL ENLACE PERMANENTE
 
     } catch (err) {
         console.error("🔴 [ONEDRIVE] ERROR TOTAL EN SUBIDA:", err.message);
