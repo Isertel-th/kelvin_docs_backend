@@ -728,16 +728,21 @@ app.delete('/api/empresa/documentos/:id', verificarToken, async (req, res) => {
 // --- CREADOR DE ADMINS ---
 
 app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res) => {
-    // Reemplazado 'admin' por 'Talento Humano'
     if (req.user.rol !== 'Talento Humano') {
         return res.status(403).json({ error: 'Acción restringida. Solo Talento Humano puede registrar usuarios.' });
     }
 
-        let { nombre_completo, cedula, correo, celular, departamento, contrasenia } = req.body;
+    // ✅ AGREGADO: Recibimos también el campo de confirmación
+    let { nombre_completo, cedula, correo, celular, departamento, contrasenia, confirmar_contrasenia } = req.body;
 
-        if (!nombre_completo || !cedula || !correo || !celular || !departamento || !contrasenia) {
-            return res.status(400).json({ error: 'Todos los campos son obligatorios (incluyendo la Contraseña).' });
-        }
+    if (!nombre_completo || !cedula || !correo || !celular || !departamento || !contrasenia || !confirmar_contrasenia) {
+        return res.status(400).json({ error: 'Todos los campos son obligatorios (incluyendo la Contraseña y su confirmación).' });
+    }
+
+    // ✅ NUEVA VALIDACIÓN: Verificar que las contraseñas sean idénticas
+    if (contrasenia !== confirmar_contrasenia) {
+        return res.status(400).json({ error: 'Las contraseñas no coinciden. Por favor, verifique e intente nuevamente.' });
+    }
 
     if (!req.file) {
         return res.status(400).json({ error: 'La foto de perfil es obligatoria. Por favor, suba una imagen.' });
@@ -758,11 +763,9 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
     }
 
     correo = correo.trim().toLowerCase();
-    const dominiosPermitidos = ['gmail.com', 'hotmail.com', 'outlook.com', 'outlook.es'];
-    const correoDominio = correo.split('@')[1];
-
-    if (!correo.includes('@') || !dominiosPermitidos.includes(correoDominio)) {
-        return res.status(400).json({ error: 'El correo electrónico no es válido o no pertenece a un dominio permitido (Gmail, Hotmail, Outlook).' });
+    // ✅ MENSAJE DE ERROR ACTUALIZADO CON LOS DOMINIOS CORRECTOS
+    if (!correo.includes('@') || !esCorreoValido(correo)) {
+        return res.status(400).json({ error: 'El correo electrónico no es válido o no pertenece a un dominio permitido (gmail.com, hotmail.com, outlook.com, outlook.es, isertel.net).' });
     }
 
     const fecha_ingreso = new Date();
