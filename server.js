@@ -71,18 +71,15 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
     console.log("🟡 [ONEDRIVE] INICIANDO SUBIDA - Archivo:", originalName, " | Carpeta:", subFolder);
 
     try {
-        // ✅ USAMOS LA FUNCIÓN DE TOKEN CACHEADO (ahorra mucho tiempo)
         const token = await obtenerTokenValido();
         console.log("🔵 [ONEDRIVE] Token válido obtenido correctamente"); 
 
-        // ✅ Limpieza de caracteres especiales en el nombre del archivo
         const cleanOriginalName = originalName
             .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
             .replace(/[^a-zA-Z0-9._-]/g, "_");
 
         const fileName = `${Date.now()}_${cleanOriginalName}`;
         
-        // ✅ Construcción de la ruta completa con subcarpetas
         let rutaCompleta = 'Documentos_Isertel_Sistema/';
         if (subFolder) {
             const subFolderLimpio = subFolder
@@ -94,12 +91,10 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
 
         const rutaCodificada = encodeURIComponent(rutaCompleta);
         
-        // ✅ URL para subir el archivo
         const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/root:/${rutaCodificada}:/content`;
 
         console.log("🔗 URL de subida:", url);
 
-        // ✅ Petición PUT para subir el archivo
         const res = await fetch(url, {
             method: 'PUT',
             headers: {
@@ -118,10 +113,13 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
         }
 
         const driveItem = await res.json();
-        const archivoId = driveItem.id; // 📌 Guardamos el ID del archivo recién subido
+        const archivoId = driveItem.id; 
+        
+        // ✅ GUARDAMOS EL ENLACE DE DESCARGA DIRECTA (ESTE ES EL QUE SIRVE PARA <img>)
+        const enlaceDirectoImagen = driveItem["@microsoft.graph.downloadUrl"];
 
         // ==================================================
-        // ✅ CREACIÓN DE ENLACE PÚBLICO PERMANENTE
+        // ✅ CREAMOS TAMBIÉN EL ENLACE PERMANENTE (POR SI LO NECESITAS PARA OTRA COSA)
         // ==================================================
         const urlPermisos = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/items/${archivoId}/createLink`;
         
@@ -132,23 +130,25 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                type: "view",       // Tipo: solo ver
-                scope: "anonymous"  // Alcance: cualquiera con el enlace puede ver
+                type: "view",       
+                scope: "anonymous"  
             })
         });
 
         if (!resEnlace.ok) {
-            const errText = await resEnlace.text();
-            console.error("🔴 [ONEDRIVE] ERROR AL CREAR ENLACE:", resEnlace.status, errText);
-            // Plan B: devolvemos el enlace temporal si falla el permanente
-            return driveItem["@microsoft.graph.downloadUrl"];
+            console.error("🔴 [ONEDRIVE] ERROR AL CREAR ENLACE:", resEnlace.status);
+            // Si falla, devolvemos solo el directo
+            return enlaceDirectoImagen;
         }
 
         const datosEnlace = await resEnlace.json();
         const enlacePermanente = datosEnlace.link.webUrl;
 
-        console.log("✅ [ONEDRIVE] ENLACE PERMANENTE CREADO:", enlacePermanente);
-        return enlacePermanente; // 📌 Devolvemos el enlace listo para guardar en BD
+        console.log("✅ [ONEDRIVE] ENLACE DIRECTO (IMAGEN):", enlaceDirectoImagen);
+        console.log("✅ [ONEDRIVE] ENLACE PERMANENTE (WEB):", enlacePermanente);
+
+        // 📌 AHORA DEVOLVEMOS EL ENLACE DIRECTO, QUE ES EL QUE FUNCIONA PARA LA IMAGEN
+        return enlaceDirectoImagen;
 
     } catch (err) {
         console.error("🔴 [ONEDRIVE] ERROR TOTAL EN SUBIDA:", err.message);
