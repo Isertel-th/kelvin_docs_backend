@@ -42,28 +42,47 @@ const cca = new msal.ConfidentialClientApplication(msalConfig);
 
 // Función auxiliar para subir archivos directos a OneDrive usando Microsoft Graph
 // ✅ FUNCIÓN CORREGIDA Y MEJORADA PARA ONEDRIVE
+// ✅ OPTIMIZACIÓN: GUARDAR TOKEN PARA NO PEDIRLO SIEMPRE
+let _cachedToken = null;
+let _tokenExpiresAt = 0;
+
+async function obtenerTokenValido() {
+    const ahora = Date.now() / 1000; // Tiempo actual en segundos
+    // Si el token existe y le falta más de 5 minutos para vencer, lo reutilizamos
+    if (_cachedToken && _tokenExpiresAt > (ahora + 300)) { 
+        return _cachedToken;
+    }
+
+    // Si no es válido, pedimos uno nuevo
+    const tokenRequest = { scopes: ['https://graph.microsoft.com/.default'] };
+    const response = await cca.acquireTokenByClientCredential(tokenRequest);
+    
+    if (!response || !response.accessToken) throw new Error("No se pudo obtener token");
+
+    // Guardamos el token y su fecha de vencimiento
+    _cachedToken = response.accessToken;
+    _tokenExpiresAt = response.expiresOnTimestamp;
+    
+    console.log("🔑 Nuevo token OneDrive obtenido y guardado");
+    return _cachedToken;
+}
+// ✅ FUNCIÓN COMPLETA Y CORREGIDA PARA SUBIR A ONEDRIVE
 async function subirAOneDrive(buffer, originalName, subFolder = '') {
     console.log("🟡 [ONEDRIVE] INICIANDO SUBIDA - Archivo:", originalName, " | Carpeta:", subFolder);
 
     try {
-        const tokenRequest = {
-            scopes: ['https://graph.microsoft.com/.default']
-        };
-        
-        const response = await cca.acquireTokenByClientCredential(tokenRequest);
-        console.log("🔵 [ONEDRIVE] Token obtenido correctamente:", !!response?.accessToken); 
+        // ✅ USAMOS LA FUNCIÓN DE TOKEN CACHEADO (ahorra mucho tiempo)
+        const token = await obtenerTokenValido();
+        console.log("🔵 [ONEDRIVE] Token válido obtenido correctamente"); 
 
-        if (!response || !response.accessToken) {
-            throw new Error("No se pudo obtener token de acceso de Microsoft");
-        }
-        const token = response.accessToken;
-
+        // ✅ Limpieza de caracteres especiales en el nombre del archivo
         const cleanOriginalName = originalName
             .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
             .replace(/[^a-zA-Z0-9._-]/g, "_");
 
         const fileName = `${Date.now()}_${cleanOriginalName}`;
         
+        // ✅ Construcción de la ruta completa con subcarpetas
         let rutaCompleta = 'Documentos_Isertel_Sistema/';
         if (subFolder) {
             const subFolderLimpio = subFolder
@@ -75,10 +94,12 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
 
         const rutaCodificada = encodeURIComponent(rutaCompleta);
         
+        // ✅ URL para subir el archivo
         const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/root:/${rutaCodificada}:/content`;
 
         console.log("🔗 URL de subida:", url);
 
+        // ✅ Petición PUT para subir el archivo
         const res = await fetch(url, {
             method: 'PUT',
             headers: {
@@ -100,7 +121,7 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
         const archivoId = driveItem.id; // 📌 Guardamos el ID del archivo recién subido
 
         // ==================================================
-        // ✅ NUEVO: CREAR ENLACE PÚBLICO PERMANENTE
+        // ✅ CREACIÓN DE ENLACE PÚBLICO PERMANENTE
         // ==================================================
         const urlPermisos = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/items/${archivoId}/createLink`;
         
@@ -119,7 +140,7 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
         if (!resEnlace.ok) {
             const errText = await resEnlace.text();
             console.error("🔴 [ONEDRIVE] ERROR AL CREAR ENLACE:", resEnlace.status, errText);
-            // Si falla, devolvemos el temporal, pero avisamos
+            // Plan B: devolvemos el enlace temporal si falla el permanente
             return driveItem["@microsoft.graph.downloadUrl"];
         }
 
@@ -127,7 +148,7 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
         const enlacePermanente = datosEnlace.link.webUrl;
 
         console.log("✅ [ONEDRIVE] ENLACE PERMANENTE CREADO:", enlacePermanente);
-        return enlacePermanente; // 📌 AHORA GUARDAMOS EL ENLACE PERMANENTE
+        return enlacePermanente; // 📌 Devolvemos el enlace listo para guardar en BD
 
     } catch (err) {
         console.error("🔴 [ONEDRIVE] ERROR TOTAL EN SUBIDA:", err.message);
@@ -138,18 +159,11 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
 // ✅ ==== AÑADE ESTA FUNCIÓN NUEVA, ES PARA LEER / LISTAR ====
 async function listarArchivosDeOneDrive(subFolder = '') {
     try {
-        // 1. Pedimos el mismo permiso y mismo token (es idéntico al de subir)
-        const tokenRequest = {
-            scopes: ['https://graph.microsoft.com/.default']
-        };
-        
-        const response = await cca.acquireTokenByClientCredential(tokenRequest);
-        if (!response || !response.accessToken) {
-            throw new Error("No se pudo obtener token para LEER");
-        }
-        const token = response.accessToken;
+        // ✅ 1. Usamos nuestra función optimizada para reutilizar el token (RÁPIDO)
+        const token = await obtenerTokenValido();
+        console.log("🔑 Token válido para lectura obtenido");
 
-        // 2. CONSTRUIMOS LA RUTA EXACTAMENTE IGUAL QUE EN LA OTRA FUNCIÓN
+        // ✅ 2. CONSTRUIMOS LA RUTA EXACTAMENTE IGUAL QUE EN LA OTRA FUNCIÓN
         // (Es vital que sea igual, limpia, con guiones bajos, para que coincidan las carpetas)
         let rutaCompleta = 'Documentos_Isertel_Sistema/';
         if (subFolder) {
@@ -161,16 +175,15 @@ async function listarArchivosDeOneDrive(subFolder = '') {
 
         const rutaCodificada = encodeURIComponent(rutaCompleta);
 
-        // 3. 📌 AQUÍ ESTÁ LA CLAVE:
-        // Usamos SIEMPRE la cuenta de talentohumano, IGUAL QUE EN LA DE SUBIR
-        // Lo único que cambia es el final: /children significa "dime qué hay dentro"
+        // ✅ 3. URL de lectura (apunta a la misma cuenta de talentohumano)
+        // /children significa "dime qué archivos hay dentro de esta carpeta"
         const urlLectura = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/root:/${rutaCodificada}:/children`;
 
         console.log("🔗 URL de LECTURA:", urlLectura);
 
-        // 4. Hacemos la petición de LECTURA (GET, no PUT)
+        // ✅ 4. Petición GET para obtener la lista
         const res = await fetch(urlLectura, {
-            method: 'GET', // ⚠️ OJO: Aquí es GET, en la otra era PUT
+            method: 'GET',
             headers: {
                 'Authorization': `Bearer ${token}`
             }
@@ -183,7 +196,7 @@ async function listarArchivosDeOneDrive(subFolder = '') {
         }
 
         const datos = await res.json();
-        // Devolvemos la lista de archivos encontrados
+        // Devolvemos solo la lista de archivos
         return datos.value; 
 
     } catch (err) {
@@ -191,6 +204,7 @@ async function listarArchivosDeOneDrive(subFolder = '') {
         throw err;
     }
 }
+
 // ✅ ==== FIN DE LA FUNCIÓN NUEVA ====
 
 
