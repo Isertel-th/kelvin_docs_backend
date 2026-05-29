@@ -1207,41 +1207,47 @@ app.get('/api/imagen/:id', async (req, res) => {
     }
 });
 
-// ✅ NUEVA RUTA: Obtener permisos actuales de un usuario específico
-app.get('/api/usuarios/:id/permisos', verificarToken, async (req, res) => {
+// ✅ RUTA CORREGIDA: Obtener permisos actuales DE UN DEPARTAMENTO
+app.get('/api/departamentos/:nombre/permisos', verificarToken, async (req, res) => {
     if (req.user.rol !== 'Talento Humano') return res.status(403).json({ error: 'Sin autorización' });
-    const { id } = req.params;
+    const { nombre } = req.params;
     try {
         const result = await pool.query(`
             SELECT td.id, td.nombre 
-            FROM permisos_usuario pu
-            JOIN tipos_documento td ON pu.tipo_documento_id = td.id
-            WHERE pu.usuario_id = $1
-        `, [id]);
+            FROM permisos_departamento pd
+            JOIN tipos_documento td ON pd.tipo_documento_id = td.id
+            WHERE pd.departamento_nombre = $1
+        `, [nombre]);
         res.json(result.rows);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-// ✅ NUEVA RUTA: Actualizar permisos de un usuario específico
-app.put('/api/usuarios/:id/permisos', verificarToken, async (req, res) => {
+// ✅ RUTA CORREGIDA: Actualizar permisos DE UN DEPARTAMENTO
+app.put('/api/departamentos/:nombre/permisos', verificarToken, async (req, res) => {
     if (req.user.rol !== 'Talento Humano') return res.status(403).json({ error: 'Sin autorización' });
-    const { id } = req.params;
+    const { nombre } = req.params;
     const { permisos } = req.body; // Array de IDs de tipos de documento
     try {
-        await pool.query('DELETE FROM permisos_usuario WHERE usuario_id = $1', [id]);
+        // 1. Borramos todo lo que tenía este departamento antes
+        await pool.query('DELETE FROM permisos_departamento WHERE departamento_nombre = $1', [nombre]);
+        
+        // 2. Insertamos la nueva lista completa que marcaste
         for (let id_doc of permisos) {
             await pool.query(
-                'INSERT INTO permisos_usuario (usuario_id, tipo_documento_id) VALUES ($1, $2)',
-                [id, id_doc]
+                'INSERT INTO permisos_departamento (departamento_nombre, tipo_documento_id) VALUES ($1, $2)',
+                [nombre, id_doc]
             );
         }
-        res.json({ message: 'Permisos actualizados correctamente' });
+        res.json({ message: '✅ Permisos actualizados correctamente' });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
+
+
+
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
