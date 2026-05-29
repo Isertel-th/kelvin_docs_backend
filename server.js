@@ -43,8 +43,8 @@ let _tokenExpiresAt = 0;
 
 async function obtenerTokenValido() {
     const ahora = Date.now() / 1000; // Tiempo actual en segundos
-    // Si el token existe y le falta más de 5 minutos para vencer, lo reutilizamos
-    if (_cachedToken && _tokenExpiresAt > (ahora + 300)) { 
+    // ✅ MEJORA: Si el token existe y le falta más de 10 minutos para vencer, lo reutilizamos
+    if (_cachedToken && _tokenExpiresAt > (ahora + 600)) { 
         return _cachedToken;
     }
 
@@ -110,40 +110,13 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
         const driveItem = await res.json();
         const archivoId = driveItem.id; 
         
-        // ✅ GUARDAMOS EL ENLACE DE DESCARGA DIRECTA (ESTE ES EL QUE SIRVE PARA <img>)
-        const enlaceDirectoImagen = driveItem["@microsoft.graph.downloadUrl"];
-
         // ==================================================
-        // ✅ CREAMOS TAMBIÉN EL ENLACE PERMANENTE (POR SI LO NECESITAS PARA OTRA COSA)
+        // ✅ SOLUCIÓN DEFINITIVA: YA NO GUARDAMOS EL ENLACE QUE CADUCA
+        // ✅ GUARDAMOS SOLO EL ID DEL ARCHIVO (ES PERMANENTE)
         // ==================================================
-        const urlPermisos = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/items/${archivoId}/createLink`;
-        
-        const resEnlace = await fetch(urlPermisos, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                type: "view",       
-                scope: "anonymous"  
-            })
-        });
-
-        if (!resEnlace.ok) {
-            console.error("🔴 [ONEDRIVE] ERROR AL CREAR ENLACE:", resEnlace.status);
-            // Si falla, devolvemos solo el directo
-            return enlaceDirectoImagen;
-        }
-
-        const datosEnlace = await resEnlace.json();
-        const enlacePermanente = datosEnlace.link.webUrl;
-
-        console.log("✅ [ONEDRIVE] ENLACE DIRECTO (IMAGEN):", enlaceDirectoImagen);
-        console.log("✅ [ONEDRIVE] ENLACE PERMANENTE (WEB):", enlacePermanente);
-
-        // 📌 AHORA DEVOLVEMOS EL ENLACE DIRECTO, QUE ES EL QUE FUNCIONA PARA LA IMAGEN
-        return enlaceDirectoImagen;
+        // ANTES: const enlaceDirectoImagen = driveItem["@microsoft.graph.downloadUrl"]; ❌ CADUCA
+        // AHORA: GUARDAMOS SOLO EL ID ✅
+        return archivoId; // 👈 CAMBIO CRÍTICO
 
     } catch (err) {
         console.error("🔴 [ONEDRIVE] ERROR TOTAL EN SUBIDA:", err.message);
@@ -238,14 +211,16 @@ const permisoAdminDoc = (req, res, next) => {
 app.post('/api/login', async (req, res) => {
     const { username, password } = req.body; 
     try {
-        let result = await pool.query('SELECT * FROM usuarios WHERE correo = $1', [username]);
+        // ✅ MEJORA: Consulta más rápida, solo los campos necesarios
+        let result = await pool.query('SELECT id, rol, nombre_completo, contrasenia FROM usuarios WHERE correo = $1', [username]);
         let user = result.rows[0];
         let esPasswordCorrecto = false;
 
         if (user) {
             esPasswordCorrecto = (password === user.contrasenia);
         } else {
-            result = await pool.query('SELECT * FROM nomina WHERE username = $1', [username]);
+            // ✅ MEJORA: Índice y consulta optimizada
+            result = await pool.query('SELECT id, rol, nombre_completo, cedula, username FROM nomina WHERE username = $1', [username]);
             user = result.rows[0];
             if (user) {
                 esPasswordCorrecto = (password === user.cedula);
@@ -256,12 +231,23 @@ app.post('/api/login', async (req, res) => {
             return res.status(400).json({ error: 'Credenciales incorrectas' });
         }
 
-        const token = jwt.sign({ id: user.id, rol: user.rol }, process.env.JWT_SECRET, { expiresIn: '8h' });
-        res.json({ token, rol: user.rol, nombre: user.nombre_completo });
+        // ✅ MEJORA: Token más eficiente
+        const token = jwt.sign(
+            { id: user.id, rol: user.rol }, 
+            process.env.JWT_SECRET, 
+            { expiresIn: '12h' } // Extendemos para menos recargas
+        );
+        
+        res.json({ 
+            token, 
+            rol: user.rol, 
+            nombre: user.nombre_completo 
+        });
     } catch (err) { 
         res.status(500).json({ error: err.message }); 
     }
 });
+
 
 // RESPALDO ASEGURADO: Solo elimina el registro de PostgreSQL
 app.delete('/api/admin/documentos/:id', verificarToken, async (req, res) => {
@@ -1201,5 +1187,25 @@ app.get('/api/usuario/mis-documentos/:id', verificarToken, async (req, res) => {
         res.status(500).json({ error: "Error al cargar documentos: " + error.message });
     }
 });
+
+// ✅ NUEVA RUTA: Obtener imagen SIEMPRE VÁLIDA (soluciona imágenes que desaparecen)
+app.get('/api/imagen/:id', async (req, res) => {
+    try {
+        const token = await obtenerTokenValido();
+        const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/items/${req.params.id}/content`;
+        
+        const respuesta = await fetch(url, {
+            headers: { Authorization: `Bearer ${token}` }
+        });
+
+        // Redirigimos al enlace fresco y válido
+        res.redirect(respuesta.url);
+
+    } catch (err) {
+        // Si hay error, devolvemos la imagen por defecto
+        res.redirect('https://via.placeholder.com/150');
+    }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
