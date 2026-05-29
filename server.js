@@ -733,11 +733,11 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
         return res.status(403).json({ error: 'Acción restringida. Solo Talento Humano puede registrar usuarios.' });
     }
 
-    let { nombre_completo, cedula, correo, celular, departamento, direccion, contrasenia } = req.body;
+        let { nombre_completo, cedula, correo, celular, departamento, contrasenia } = req.body;
 
-    if (!nombre_completo || !cedula || !correo || !celular || !departamento || !direccion || !contrasenia) {
-        return res.status(400).json({ error: 'Todos los campos son obligatorios (incluyendo la Contraseña).' });
-    }
+        if (!nombre_completo || !cedula || !correo || !celular || !departamento || !contrasenia) {
+            return res.status(400).json({ error: 'Todos los campos son obligatorios (incluyendo la Contraseña).' });
+        }
 
     if (!req.file) {
         return res.status(400).json({ error: 'La foto de perfil es obligatoria. Por favor, suba una imagen.' });
@@ -772,8 +772,8 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
         
         const query = `
             INSERT INTO usuarios 
-            (cedula, rol, nombre_completo, correo, celular, foto_url, fecha_ingreso, direccion, contrasenia) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
+            (cedula, rol, nombre_completo, correo, celular, foto_url, fecha_ingreso, contrasenia) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             RETURNING id, correo, fecha_ingreso
         `;
         
@@ -785,7 +785,6 @@ app.post('/api/usuarios', verificarToken, upload.single('foto'), async (req, res
             celular.trim(), 
             foto_url, 
             fecha_ingreso,
-            direccion.trim(),
             contrasenia 
         ];
         
