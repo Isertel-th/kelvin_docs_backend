@@ -980,12 +980,12 @@ app.post('/api/permisos', verificarToken, async (req, res) => {
     await pool.query('DELETE FROM permisos_departamento WHERE departamento_nombre = $1', [departamento]);
     
     // 2. Insertamos los nuevos
-for (let id_doc of permisosSeleccionados) {
-  await pool.query(
-    'INSERT INTO permisos_usuario (usuario_id, tipo_documento_id) VALUES ($1, $2)',
-    [resultado.rows[0].id, id_doc] // <-- USAMOS EL ID DEL USUARIO RECIÉN CREADO
-  );
-}
+    for (let id_doc of permisos) {
+      await pool.query(
+        'INSERT INTO permisos_departamento (departamento_nombre, tipo_documento_id) VALUES ($1, $2)',
+        [departamento, id_doc]
+      );
+    }
     res.json({ message: 'Permisos actualizados correctamente' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -997,8 +997,8 @@ for (let id_doc of permisosSeleccionados) {
 
 // ✅ NUEVA RUTA: Obtener SOLO los tipos de documento permitidos para EL USUARIO ACTUAL
 app.get('/api/mis-tipos-permitidos', verificarToken, async (req, res) => {
-  // ✅ SIEMPRE: ROL DEL USUARIO QUE INICIÓ SESIÓN
-  const rolUsuario = req.user.rol; 
+  // ✅ PERMITE RECIBIR UN ROL ESPECÍFICO PARA CONSULTAR (USO EN EDICIÓN)
+  const rolUsuario = req.headers['rol-usuario'] || req.user.rol; 
 
   try {
     let consulta = '';
@@ -1014,7 +1014,6 @@ app.get('/api/mis-tipos-permitidos', verificarToken, async (req, res) => {
       consulta = `SELECT * FROM tipos_documento WHERE nombre IN ('Certificado de Competencia', 'Acta de EPP\'s') ORDER BY nombre ASC`;
     } 
     else {
-      // 🟢 ESTA ES LA MEJORA: Busca en la tabla de permisos LO QUE CORRESPONDE A TU DEPARTAMENTO
       consulta = `
         SELECT td.* 
         FROM tipos_documento td
@@ -1022,7 +1021,7 @@ app.get('/api/mis-tipos-permitidos', verificarToken, async (req, res) => {
         WHERE pd.departamento_nombre = $1
         ORDER BY td.nombre ASC
       `;
-      valores = [rolUsuario]; // <-- TU DEPARTAMENTO
+      valores = [rolUsuario]; 
     }
 
     const result = await pool.query(consulta, valores);
@@ -1093,37 +1092,38 @@ app.post('/api/usuario/subir-documento', verificarToken, upload.single('archivo'
  * Lee de TODAS LAS TABLAS, une todo y filtra por permisos EXACTOS
  * AHORA SIN DUPLICAR LA TABLA DE MÉDICOS
  */
-// ✅ ACTUALIZAR TU RUTA DE OBTENER DOCUMENTOS PARA QUE USE PERMISOS DE USUARIO (no solo departamento)
 app.get('/api/usuario/mis-documentos/:id', verificarToken, async (req, res) => {
     console.log("🟢 [LECTURA TOTAL] Usuario:", req.user.nombre, " | Rol/Departamento:", req.user.rol, " | ID Empleado:", req.params.id);
 
     const usuarioId = req.params.id;
-    const usuarioSesionId = req.user.id; // ID del usuario que está consultando
+    const rolActual = req.user.rol;
     let condicionTipo = '';
     let valores = [usuarioId];
 
     try {
         // ==============================================
-        // 🧠 LÓGICA DE PERMISOS - AHORA POR USUARIO
+        // 🧠 LÓGICA DE PERMISOS - CORREGIDA Y ESTANDARIZADA
         // ==============================================
-        if (req.user.rol === 'Talento Humano' || req.user.rol === 'Administrador') {
+        if (rolActual === 'Talento Humano' || rolActual === 'Administrador') {
+            // 🔓 Acceso total: ve todo
             condicionTipo = '';
             console.log("✅ Acceso TOTAL concedido");
         } 
         else {
-            // 🆕 AHORA BUSCAMOS PERMISOS ASIGNADOS AL USUARIO
+            // 🔒 Otros roles: solo lo que tiene asignado en la tabla de permisos
             const permisos = await pool.query(`
                 SELECT td.nombre 
-                FROM permisos_usuario pu
-                JOIN tipos_documento td ON pu.tipo_documento_id = td.id
-                WHERE pu.usuario_id = $1
-            `, [usuarioSesionId]);
+                FROM permisos_departamento pd
+                JOIN tipos_documento td ON pd.tipo_documento_id = td.id
+                WHERE pd.departamento_nombre = $1
+            `, [rolActual]);
 
             if (permisos.rows.length === 0) {
-                console.log("⚠️ Sin permisos asignados para este usuario");
+                console.log("⚠️ Sin permisos asignados para:", rolActual);
                 return res.json([]);
             }
 
+            // ✅ ASEGURAMOS QUE LOS NOMBRES COINCIDAN 100% (con comillas si tienen apóstrofo)
             const listaTipos = permisos.rows.map(item => `'${item.nombre.replace(/'/g, "''")}'`).join(',');
             condicionTipo = `AND tipo_documento IN (${listaTipos})`;
             console.log("✅ Tipos permitidos cargados:", permisos.rows.map(p => p.nombre));
@@ -1205,49 +1205,6 @@ app.get('/api/imagen/:id', async (req, res) => {
         res.redirect('https://via.placeholder.com/150');
     }
 });
-
-
-// ✅ NUEVA RUTA: Obtener permisos ESPECÍFICOS de UN USUARIO
-app.get('/api/usuarios/:id/permisos', verificarToken, async (req, res) => {
-  if (req.user.rol !== 'Talento Humano') return res.status(403).json({ error: 'Sin autorización' });
-  try {
-    const result = await pool.query(`
-      SELECT td.id, td.nombre
-      FROM permisos_usuario pu
-      JOIN tipos_documento td ON pu.tipo_documento_id = td.id
-      WHERE pu.usuario_id = $1
-    `, [req.params.id]);
-    
-    // ✅ Si no hay permisos, devuelve array vacío
-    res.json(result.rows || []);
-  } catch (err) {
-    console.error("❌ Error al cargar permisos:", err); // <-- Agregamos log para ver el error real
-    res.status(200).json([]); // ✅ Devuelve vacío en vez de error 500
-  }
-});
-
-// ✅ NUEVA RUTA: ACTUALIZAR permisos de un usuario
-app.put('/api/usuarios/:id/permisos', verificarToken, async (req, res) => {
-  if (req.user.rol !== 'Talento Humano') return res.status(403).json({ error: 'Sin autorización' });
-  const { permisos } = req.body; // array de IDs de documentos
-  const usuarioId = req.params.id;
-
-  try {
-    // Borrar permisos anteriores
-    await pool.query('DELETE FROM permisos_usuario WHERE usuario_id = $1', [usuarioId]);
-    // Insertar nuevos
-    for (let id_doc of permisos) {
-      await pool.query(
-        'INSERT INTO permisos_usuario (usuario_id, tipo_documento_id) VALUES ($1, $2)',
-        [usuarioId, id_doc]
-      );
-    }
-    res.json({ message: 'Permisos actualizados correctamente' });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
