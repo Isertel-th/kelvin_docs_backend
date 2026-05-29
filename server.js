@@ -9,11 +9,6 @@ require('dotenv').config();
 
 
 
-console.log("PUERTO:", process.env.PORT); 
-console.log("DATABASE_URL:", process.env.DATABASE_URL);
-console.log("¿Existe archivo?", require('fs').existsSync('./.env'));
-console.log("VARIABLES:", process.env);
-
 const app = express();
 app.use(express.json());
 app.use(cors());
