@@ -268,10 +268,10 @@ app.get('/api/admin/pasivos', verificarToken, permisoAdminDoc, async (req, res) 
 });
 
 app.post('/api/admin/crear-usuario', verificarToken, upload.single('foto'), async (req, res) => {
-    // Reemplazado 'admin' por 'Talento Humano'
     if (req.user.rol !== 'Talento Humano') return res.status(403).json({ error: 'Solo el personal de Talento Humano crea usuarios' });
     
-    const { cedula, nombre_completo, fecha_ingreso, correo, celular, username } = req.body;
+    // ✅ AGREGA ESTA LÍNEA: Aquí le decimos al servidor que reciba el valor de dirección
+    const { cedula, nombre_completo, fecha_ingreso, correo, celular, username, direccion } = req.body; 
 
     if(!cedula || cedula.length !== 10) return res.status(400).json({ error: 'Cédula debe tener 10 dígitos' });
     if(!correo || !esCorreoValido(correo)) return res.status(400).json({ error: 'Correo inválido o dominio no permitido' });
@@ -280,11 +280,11 @@ app.post('/api/admin/crear-usuario', verificarToken, upload.single('foto'), asyn
     const usuarioLogin = username || cedula;
 
     try {
-        // Subida a OneDrive dentro de la subcarpeta 'Fotos_Perfil'
         const foto_url = await subirAOneDrive(req.file.buffer, req.file.originalname, 'Fotos_Perfil');
 
         await pool.query(
-            'INSERT INTO nomina (username, cedula, nombre_completo, rol, fecha_ingreso, correo, celular, foto_url) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+            'INSERT INTO nomina (username, cedula, nombre_completo, rol, fecha_ingreso, correo, celular, direccion, foto_url) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+            // ✅ Ahora sí existe la variable 'direccion' y se guarda correctamente
             [usuarioLogin, cedula, nombre_completo, 'user', fecha_ingreso || null, correo, celular, direccion, foto_url]
         );
         res.json({ message: 'Ok' });
