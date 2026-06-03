@@ -1207,38 +1207,38 @@ app.get('/api/imagen/:id', async (req, res) => {
 });
 
 
-// ✅ RUTA DEFINITIVA PARA VER Y DESCARGAR ARCHIVOS
-app.get('/api/descargar-archivo/:archivoId', async (req, res) => {
+
+// ✅ RUTA FALTANTE: Descargar / Ver archivos (PDF, etc.) - SOLUCIÓN AL ERROR 404
+app.get('/api/descargar-archivo/:id', async (req, res) => {
     try {
-        const { archivoId } = req.params;
-        const token = await obtenerTokenValido(); // Reutilizamos tu función ya creada
+        // 1. Obtener token válido (reutilizamos tu función que ya funciona)
+        const token = await obtenerTokenValido();
 
-        // 📌 Endpoint de Microsoft Graph para obtener el enlace de descarga
-        const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/items/${archivoId}`;
-
+        // 2. Construir la URL de Microsoft Graph para obtener el contenido del archivo
+        const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/items/${req.params.id}/content`;
+        
+        // 3. Petición a OneDrive para obtener el enlace de descarga temporal y válido
         const respuesta = await fetch(url, {
-            headers: {
-                'Authorization': `Bearer ${token}`
-            }
+            headers: { Authorization: `Bearer ${token}` }
         });
 
-        if (!respuesta.ok) {
-            throw new Error(`No se pudo obtener el archivo: ${respuesta.status}`);
-        }
-
-        const datosArchivo = await respuesta.json();
-        const enlaceDescarga = datosArchivo["@microsoft.graph.downloadUrl"]; // Este enlace SÍ funciona
-
-        if (!enlaceDescarga) {
-            return res.status(404).send("Archivo no encontrado o enlace no disponible");
-        }
-
-        // ✅ Redirigimos al enlace real de OneDrive (es válido por unas horas)
-        res.redirect(enlaceDescarga);
+        // 4. Redirigir al usuario directamente al archivo
+        //    - Si usas esto en el botón "Ver", el navegador abrirá el PDF.
+        //    - Si usas esto en el botón "Descargar", se bajará el archivo.
+        res.redirect(respuesta.url);
 
     } catch (err) {
-        console.error("❌ Error al descargar:", err.message);
-        res.status(404).send("El archivo no se encontraba disponible en el sitio.");
+        console.error("🔴 ERROR AL DESCARGAR:", err.message);
+        // Si hay error, mostramos una página simple o un mensaje
+        res.status(404).send(`
+            <html>
+                <body style="font-family: Arial; text-align: center; padding-top: 50px;">
+                    <h2 style="color: #ef4444;">❌ Archivo no encontrado</h2>
+                    <p>El archivo solicitado no está disponible o ha sido movido.</p>
+                    <a href="javascript:history.back()">← Volver al sistema</a>
+                </body>
+            </html>
+        `);
     }
 });
 
