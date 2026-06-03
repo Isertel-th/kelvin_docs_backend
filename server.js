@@ -1207,29 +1207,39 @@ app.get('/api/imagen/:id', async (req, res) => {
 });
 
 
-// ✅ RUTA PARA DESCARGAR ARCHIVOS DE ONEDRIVE (SOLUCIÓN DEL 404)
-app.get('/descargar/:archivoId', async (req, res) => {
-  try {
-    const { archivoId } = req.params;
-    const token = await obtenerTokenValido(); // Reutilizamos tu función que ya funciona
 
-    // 📌 URL OFICIAL DE MICROSOFT GRAPH PARA OBTENER EL ARCHIVO
-    const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/items/${archivoId}/content`;
+// ✅ NUEVA RUTA: Obtener archivo por ID (SOLUCIÓN AL ERROR 404)
+app.get('/api/descargar/:id', async (req, res) => {
+    try {
+        // 1. Obtener un token válido (reutilizando tu función existente)
+        const token = await obtenerTokenValido();
 
-    const respuesta = await fetch(url, {
-      method: 'GET',
-      headers: { Authorization: `Bearer ${token}` }
-    });
+        // 2. Construir la URL oficial de Microsoft Graph usando EL ID GUARDADO
+        const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/items/${req.params.id}/content`;
 
-    if (!respuesta.ok) throw new Error('Archivo no encontrado en OneDrive');
+        // 3. Petición a Microsoft para obtener el archivo
+        const respuesta = await fetch(url, {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
 
-    // 🚀 Redirigir al enlace real de descarga (válido en ese momento)
-    res.redirect(respuesta.url);
+        if (!respuesta.ok) {
+            throw new Error('No se pudo acceder al archivo en la nube');
+        }
 
-  } catch (err) {
-    console.error('❌ Error al descargar:', err.message);
-    res.status(404).send('Archivo no encontrado o enlace inválido');
-  }
+        // 4. Transmitir el archivo directamente al navegador del usuario
+        res.setHeader('Content-Disposition', `attachment; filename="archivo_descargado"`);
+        res.setHeader('Content-Type', respuesta.headers.get('Content-Type') || 'application/pdf');
+        
+        // Enviar el flujo de datos
+        respuesta.body.pipe(res);
+
+    } catch (err) {
+        console.error("🔴 ERROR AL DESCARGAR:", err);
+        res.status(404).send("Archivo no encontrado o enlace caducado");
+    }
 });
 
 const PORT = process.env.PORT || 3000;
