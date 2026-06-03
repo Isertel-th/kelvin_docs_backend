@@ -69,11 +69,13 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
         const token = await obtenerTokenValido();
         console.log("🔵 [ONEDRIVE] Token válido obtenido correctamente"); 
 
+        // 🧹 Limpiamos el nombre original (sin números)
         const cleanOriginalName = originalName
             .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
             .replace(/[^a-zA-Z0-9._-]/g, "_");
 
-        const fileName = `${Date.now()}_${cleanOriginalName}`;
+        // ✅ Nombre con números (solo para guardar en OneDrive y evitar duplicados)
+        const fileNameUnico = `${Date.now()}_${cleanOriginalName}`;
         
         let rutaCompleta = 'Documentos_Isertel_Sistema/';
         if (subFolder) {
@@ -82,7 +84,7 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
                 .replace(/[^a-zA-Z0-9._-]/g, "_");
             rutaCompleta += `${subFolderLimpio}/`;
         }
-        rutaCompleta += fileName;
+        rutaCompleta += fileNameUnico;
 
         const rutaCodificada = encodeURIComponent(rutaCompleta);
         
@@ -110,7 +112,12 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
         const driveItem = await res.json();
         const archivoId = driveItem.id; 
         
-        return { id: archivoId, nombreReal: fileName }; // ✅ Ahora devuelve ID + Nombre real
+        // ✅ AHORA DEVOLVEMOS LO QUE NECESITAMOS:
+        return { 
+            id: archivoId,               // ID para usar en tu ruta /api/descargar/:id
+            nombreOriginal: cleanOriginalName,  // Nombre LIMPIO para mostrar y descargar
+            nombreEnNube: fileNameUnico   // Nombre con números (por si lo necesitas ver)
+        };
 
     } catch (err) {
         console.error("🔴 [ONEDRIVE] ERROR TOTAL EN SUBIDA:", err.message);
@@ -427,44 +434,48 @@ app.post('/api/admin/subir-a-usuario', verificarToken, permisoAdminDoc, upload.s
 
     try {
         console.log("🟡 [RUTA SUBIR] Llamando al servicio de OneDrive...");
+        // ✅ AHORA RECIBIMOS URL, ID Y NOMBRE LIMPIO
         const archivoData = await subirAOneDrive(req.file.buffer, req.file.originalname, tipo_documento);
         
         const id_onedrive = archivoData.id;
-        const nombreRealArchivo = archivoData.nombreReal;
+        const url_descarga = archivoData.url; // ✅ ESTE ES EL ENLACE QUE USARÁS PARA DESCARGAR
+        const nombreLimpio = archivoData.nombreReal; // ✅ NOMBRE SIN LOS NÚMEROS EXTRA
 
         console.log("🟢 [RUTA SUBIR] ÉXITO: Archivo subido, guardando en BD...");
 
         if (tabla === 'acta_epps' || tabla === 'certifi_competencia') {
             await pool.query(
-                `INSERT INTO ${tabla} (usuario_id, tipo_documento, subtipo_documento, id_onedrive, nombre_user, nombre_archivo, fecha_documento, periodo, estado, nombre_real_archivo) 
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`, 
+                `INSERT INTO ${tabla} (usuario_id, tipo_documento, subtipo_documento, url_descarga, id_onedrive, nombre_user, nombre_archivo, fecha_documento, periodo, estado, nombre_real_archivo) 
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`, 
                 [
                     usuario_id, 
                     tipo_documento, 
                     subtipo_documento || 'General / Único', 
-                    id_onedrive, 
+                    url_descarga,  // ✅ GUARDAMOS EL ENLACE AQUÍ
+                    id_onedrive,   // ✅ GUARDAMOS EL ID POR SI LO NECESITAS
                     nombre_user, 
                     nombre_archivo, 
                     fecha_documento || null, 
                     periodo || null, 
                     estadoUsuario,
-                    nombreRealArchivo // ✅ Si quieres guardar el nombre real
+                    nombreLimpio   // ✅ GUARDAMOS EL NOMBRE LIMPIO
                 ]
             );
         } else {
             await pool.query(
-                `INSERT INTO ${tabla} (usuario_id, tipo_documento, subtipo_documento, id_onedrive, nombre_user, nombre_archivo, fecha_documento, periodo, nombre_real_archivo) 
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, 
+                `INSERT INTO ${tabla} (usuario_id, tipo_documento, subtipo_documento, url_descarga, id_onedrive, nombre_user, nombre_archivo, fecha_documento, periodo, nombre_real_archivo) 
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`, 
                 [
                     usuario_id, 
                     tipo_documento, 
                     subtipo_documento || 'General / Único', 
-                    id_onedrive, 
+                    url_descarga,  // ✅ ENLACE DE DESCARGA
+                    id_onedrive,   // ✅ ID INTERNO
                     nombre_user, 
                     nombre_archivo, 
                     fecha_documento || null, 
                     periodo || null,
-                    nombreRealArchivo
+                    nombreLimpio   // ✅ NOMBRE SIN NÚMEROS
                 ]
             );
         }
