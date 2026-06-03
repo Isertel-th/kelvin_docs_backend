@@ -110,12 +110,6 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
         const driveItem = await res.json();
         const archivoId = driveItem.id; 
         
-        // ==================================================
-        // ✅ SOLUCIÓN DEFINITIVA: YA NO GUARDAMOS EL ENLACE QUE CADUCA
-        // ✅ GUARDAMOS SOLO EL ID DEL ARCHIVO (ES PERMANENTE)
-        // ==================================================
-        // ANTES: const enlaceDirectoImagen = driveItem["@microsoft.graph.downloadUrl"]; ❌ CADUCA
-        // AHORA: GUARDAMOS SOLO EL ID ✅
         return archivoId; // 👈 CAMBIO CRÍTICO
 
     } catch (err) {
@@ -1211,47 +1205,30 @@ app.get('/api/imagen/:id', async (req, res) => {
 // ✅ NUEVA RUTA: Obtener archivo por ID (SOLUCIÓN AL ERROR 404)
 app.get('/api/descargar/:id', async (req, res) => {
     try {
-        // 1. Obtener un token válido (reutilizando tu función existente)
         const token = await obtenerTokenValido();
-
-        // 2. Construir la URL oficial de Microsoft Graph usando EL ID GUARDADO
         const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/items/${req.params.id}/content`;
 
-        // 3. Petición a Microsoft para obtener el archivo
         const respuesta = await fetch(url, {
             method: 'GET',
-            headers: {
-                'Authorization': `Bearer ${token}`
-            }
+            headers: { 'Authorization': `Bearer ${token}` }
         });
 
-        if (!respuesta.ok) {
-            throw new Error('No se pudo acceder al archivo en la nube');
-        }
+        if (!respuesta.ok) throw new Error('No se pudo acceder al archivo');
 
-        // ✅ CAMBIO: Leer el nombre original de la base de datos
-        // Consultamos el nombre del archivo según el ID
+        // Obtener nombre original
         const consultaNombre = await pool.query(`
             SELECT nombre_archivo FROM documentos WHERE url_cloudinary = $1
-            UNION ALL
-            SELECT nombre_archivo FROM documentos_pasivos WHERE url_cloudinary = $1
-            UNION ALL
-            SELECT nombre_archivo FROM acta_epps WHERE url_cloudinary = $1
-            UNION ALL
-            SELECT nombre_archivo FROM certifi_competencia WHERE url_cloudinary = $1
-            UNION ALL
-            SELECT nombre_archivo FROM docus_medicos WHERE url_cloudinary = $1
-            UNION ALL
-            SELECT nombre_archivo FROM certificados_aptitud WHERE url_cloudinary = $1
+            UNION ALL SELECT nombre_archivo FROM documentos_pasivos WHERE url_cloudinary = $1
+            UNION ALL SELECT nombre_archivo FROM acta_epps WHERE url_cloudinary = $1
+            UNION ALL SELECT nombre_archivo FROM certifi_competencia WHERE url_cloudinary = $1
+            UNION ALL SELECT nombre_archivo FROM docus_medicos WHERE url_cloudinary = $1
+            UNION ALL SELECT nombre_archivo FROM certificados_aptitud WHERE url_cloudinary = $1
         `, [req.params.id]);
 
         const nombreArchivo = consultaNombre.rows[0]?.nombre_archivo || 'documento.pdf';
 
-        // ✅ CAMBIO: Forzar nombre y tipo PDF
         res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(nombreArchivo)}"`);
         res.setHeader('Content-Type', 'application/pdf');
-        
-        // Enviar el flujo de datos
         respuesta.body.pipe(res);
 
     } catch (err) {
