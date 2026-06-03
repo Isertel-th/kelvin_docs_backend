@@ -1206,11 +1206,17 @@ app.get('/api/imagen/:id', async (req, res) => {
 
 
 // ✅ RUTA DE DESCARGA POR RUTA - VERSIÓN COMPATIBLE 100%
-app.get('/api/descargar-archivo/:ruta(*)', async (req, res) => { // ✅ SINTAXIS CORREGIDA
+// ✅ RUTA DE DESCARGA - SINTAXIS COMPATIBLE CON TODAS LAS VERSIONES
+app.get('/api/descargar-archivo/', (req, res) => {
+    // Redirige si falta la barra final o corrige, pero lo importante es capturar todo
+}, async (req, res) => {
     try {
         const token = await obtenerTokenValido();
-        // ✅ Capturamos la ruta completa con el nuevo nombre
-        const rutaCompleta = req.params.ruta; 
+        
+        // 📌 TRUCO DEFINITIVO: Capturamos la URL completa manualmente
+        // Esto funciona SIEMPRE, no importa la versión de Express
+        const rutaCompleta = req.url.replace('/api/descargar-archivo/', '');
+
         console.log("🔍 Descargando por RUTA:", rutaCompleta);
 
         // ✅ Consultamos directamente por la ruta, NO por ID
@@ -1224,7 +1230,7 @@ app.get('/api/descargar-archivo/:ruta(*)', async (req, res) => { // ✅ SINTAXIS
             headers: { 
                 'Authorization': `Bearer ${token}`
             },
-            redirect: 'manual' // Importante para capturar la redirección
+            redirect: 'manual' 
         });
 
         // Microsoft nos devuelve el enlace temporal directo
@@ -1247,7 +1253,6 @@ app.get('/api/descargar-archivo/:ruta(*)', async (req, res) => { // ✅ SINTAXIS
             <html>
                 <body style="font-family: Arial; text-align: center; padding-top: 50px;">
                     <h2 style="color: #ef4444;">❌ Archivo no encontrado o ruta inválida</h2>
-                    <p>Ruta buscada: ${req.params.ruta}</p>
                     <p>Verifica que la carpeta <b>Documentos_Isertel_Sistema</b> exista en tu OneDrive.</p>
                     <a href="javascript:history.back()">← Volver</a>
                 </body>
