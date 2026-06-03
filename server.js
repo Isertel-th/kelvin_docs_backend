@@ -1206,5 +1206,31 @@ app.get('/api/imagen/:id', async (req, res) => {
     }
 });
 
+
+// ✅ RUTA PARA DESCARGAR ARCHIVOS DE ONEDRIVE (SOLUCIÓN DEL 404)
+app.get('/descargar/:archivoId', async (req, res) => {
+  try {
+    const { archivoId } = req.params;
+    const token = await obtenerTokenValido(); // Reutilizamos tu función que ya funciona
+
+    // 📌 URL OFICIAL DE MICROSOFT GRAPH PARA OBTENER EL ARCHIVO
+    const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/items/${archivoId}/content`;
+
+    const respuesta = await fetch(url, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}` }
+    });
+
+    if (!respuesta.ok) throw new Error('Archivo no encontrado en OneDrive');
+
+    // 🚀 Redirigir al enlace real de descarga (válido en ese momento)
+    res.redirect(respuesta.url);
+
+  } catch (err) {
+    console.error('❌ Error al descargar:', err.message);
+    res.status(404).send('Archivo no encontrado o enlace inválido');
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
