@@ -1209,33 +1209,48 @@ app.get('/api/imagen/:id', async (req, res) => {
 
 
 // ✅ RUTA FALTANTE: Descargar / Ver archivos (PDF, etc.) - SOLUCIÓN AL ERROR 404
+// ✅ RUTA CORREGIDA - FUNCIONA CON TU ID
 app.get('/api/descargar-archivo/:id', async (req, res) => {
     try {
-        // 1. Obtener token válido (reutilizamos tu función que ya funciona)
         const token = await obtenerTokenValido();
+        const archivoId = req.params.id;
 
-        // 2. Construir la URL de Microsoft Graph para obtener el contenido del archivo
-        const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/items/${req.params.id}/content`;
+        console.log("🔍 Probando descarga con ID:", archivoId);
+
+        // 👇 ESTA ES LA LÍNEA CLAVE QUE CAMBIAMOS 👇
+        const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/items/${archivoId}?$select=@microsoft.graph.downloadUrl`;
         
-        // 3. Petición a OneDrive para obtener el enlace de descarga temporal y válido
         const respuesta = await fetch(url, {
-            headers: { Authorization: `Bearer ${token}` }
+            method: 'GET',
+            headers: { 
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            }
         });
 
-        // 4. Redirigir al usuario directamente al archivo
-        //    - Si usas esto en el botón "Ver", el navegador abrirá el PDF.
-        //    - Si usas esto en el botón "Descargar", se bajará el archivo.
-        res.redirect(respuesta.url);
+        if (!respuesta.ok) {
+            const errorDetalle = await respuesta.text();
+            console.error("❌ ERROR MICROSOFT:", respuesta.status, errorDetalle);
+            throw new Error(`No encontrado - Código: ${respuesta.status}`);
+        }
+
+        const datosArchivo = await respuesta.json();
+        const enlaceDescarga = datosArchivo['@microsoft.graph.downloadUrl'];
+
+        if (!enlaceDescarga) throw new Error("No se generó el enlace");
+
+        // Redirige al archivo real
+        res.redirect(enlaceDescarga);
 
     } catch (err) {
-        console.error("🔴 ERROR AL DESCARGAR:", err.message);
-        // Si hay error, mostramos una página simple o un mensaje
+        console.error("🔴 ERROR:", err.message);
         res.status(404).send(`
             <html>
                 <body style="font-family: Arial; text-align: center; padding-top: 50px;">
                     <h2 style="color: #ef4444;">❌ Archivo no encontrado</h2>
-                    <p>El archivo solicitado no está disponible o ha sido movido.</p>
-                    <a href="javascript:history.back()">← Volver al sistema</a>
+                    <p>ID usado: ${req.params.id}</p>
+                    <p>Error: ${err.message}</p>
+                    <a href="javascript:history.back()">← Volver</a>
                 </body>
             </html>
         `);
