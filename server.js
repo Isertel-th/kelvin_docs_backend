@@ -76,7 +76,7 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
 
         const fileName = `${Date.now()}_${cleanOriginalName}`;
         
-        // Ruta completa limpia
+        // ✅ RUTA COMPLETA: Nosotros la creamos, nosotros la controlamos
         let rutaCompleta = 'Documentos_Isertel_Sistema/';
         if (subFolder) {
             const subFolderLimpio = subFolder
@@ -88,7 +88,6 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
 
         const rutaCodificada = encodeURIComponent(rutaCompleta);
         
-        // ✅ URL DE SUBIDA CORRECTA
         const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/root:/${rutaCodificada}:/content`;
 
         console.log("🔗 URL de subida:", url);
@@ -111,10 +110,10 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
         }
 
         const driveItem = await res.json();
-        const archivoId = driveItem.id; 
         
-        console.log("✅ [ONEDRIVE] ARCHIVO SUBIDO CORRECTAMENTE. ID GUARDADO:", archivoId);
-        return archivoId; // 👈 ESTE ID ES EL que debemos guardar en la BD
+        // 🔴 CAMBIO CRÍTICO: YA NO GUARDAMOS EL ID, GUARDAMOS LA RUTA
+        console.log("✅ [ONEDRIVE] ARCHIVO SUBIDO CORRECTAMENTE. RUTA GUARDADA:", rutaCompleta);
+        return rutaCompleta; // <--- ESTO ES LO QUE SE GUARDA EN LA BD AHORA
 
     } catch (err) {
         console.error("🔴 [ONEDRIVE] ERROR TOTAL EN SUBIDA:", err.message);
@@ -1207,48 +1206,50 @@ app.get('/api/imagen/:id', async (req, res) => {
 
 
 // ✅ RUTA CORREGIDA Y FUNCIONAL 100%
-app.get('/api/descargar-archivo/:id', async (req, res) => {
+// ✅ RUTA DE DESCARGA POR RUTA (LA MÁS SEGURA)
+app.get('/api/descargar-archivo/*', async (req, res) => { // Usamos * para capturar toda la ruta
     try {
         const token = await obtenerTokenValido();
-        const archivoId = req.params.id;
+        // ✅ Capturamos la ruta completa que guardamos en la BD
+        const rutaCompleta = req.params[0]; 
+        console.log("🔍 Descargando por RUTA:", rutaCompleta);
 
-        console.log("🔍 Probando descarga con ID:", archivoId);
-
-        // ✅ RUTA CORRECTA PARA OBTENER EL ENLACE DE DESCARGA DIRECTO POR ID
-        const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/items/${archivoId}?$select=id,name,@microsoft.graph.downloadUrl`;
+        // ✅ Consultamos directamente por la ruta, NO por ID
+        const rutaCodificada = encodeURIComponent(rutaCompleta);
+        const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/root:/${rutaCodificada}:/content`;
         
+        console.log("🔗 URL FINAL DE CONSULTA:", url);
+
         const respuesta = await fetch(url, {
             method: 'GET',
             headers: { 
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json'
-            }
+                'Authorization': `Bearer ${token}`
+            },
+            redirect: 'manual' // Importante para capturar la redirección
         });
+
+        // Microsoft nos devuelve el enlace temporal directo
+        if (respuesta.status === 302 || respuesta.status === 200) {
+            const enlaceDescarga = respuesta.headers.get('location');
+            if(enlaceDescarga){
+                return res.redirect(enlaceDescarga);
+            }
+        }
 
         if (!respuesta.ok) {
             const errorDetalle = await respuesta.text();
             console.error("❌ ERROR MICROSOFT:", respuesta.status, errorDetalle);
-            throw new Error(`No encontrado - Código: ${respuesta.status}`);
+            throw new Error(`Archivo no encontrado - Código: ${respuesta.status}`);
         }
-
-        const datosArchivo = await respuesta.json();
-        const enlaceDescarga = datosArchivo['@microsoft.graph.downloadUrl'];
-
-        if (!enlaceDescarga) throw new Error("No se generó el enlace de descarga");
-
-        console.log("✅ ENLACE GENERADO CORRECTAMENTE, REDIRIGIENDO...");
-
-        // ✅ REDIRIGE AL ARCHIVO REAL (ENLACE TEMPORAL PERO VÁLIDO)
-        res.redirect(enlaceDescarga);
 
     } catch (err) {
         console.error("🔴 ERROR AL DESCARGAR:", err.message);
         res.status(404).send(`
             <html>
                 <body style="font-family: Arial; text-align: center; padding-top: 50px;">
-                    <h2 style="color: #ef4444;">❌ Archivo no encontrado o ID inválido</h2>
-                    <p>ID usado: ${req.params.id}</p>
-                    <p>Error: ${err.message}</p>
+                    <h2 style="color: #ef4444;">❌ Archivo no encontrado o ruta inválida</h2>
+                    <p>Ruta buscada: ${req.params[0]}</p>
+                    <p>Verifica que la carpeta <b>Documentos_Isertel_Sistema</b> exista en tu OneDrive.</p>
                     <a href="javascript:history.back()">← Volver</a>
                 </body>
             </html>
