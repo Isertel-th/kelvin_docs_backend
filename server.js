@@ -69,12 +69,14 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
         const token = await obtenerTokenValido();
         console.log("🔵 [ONEDRIVE] Token válido obtenido correctamente"); 
 
+        // Limpieza de caracteres
         const cleanOriginalName = originalName
             .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
             .replace(/[^a-zA-Z0-9._-]/g, "_");
 
         const fileName = `${Date.now()}_${cleanOriginalName}`;
         
+        // Ruta completa limpia
         let rutaCompleta = 'Documentos_Isertel_Sistema/';
         if (subFolder) {
             const subFolderLimpio = subFolder
@@ -86,6 +88,7 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
 
         const rutaCodificada = encodeURIComponent(rutaCompleta);
         
+        // ✅ URL DE SUBIDA CORRECTA
         const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/root:/${rutaCodificada}:/content`;
 
         console.log("🔗 URL de subida:", url);
@@ -110,13 +113,8 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
         const driveItem = await res.json();
         const archivoId = driveItem.id; 
         
-        // ==================================================
-        // ✅ SOLUCIÓN DEFINITIVA: YA NO GUARDAMOS EL ENLACE QUE CADUCA
-        // ✅ GUARDAMOS SOLO EL ID DEL ARCHIVO (ES PERMANENTE)
-        // ==================================================
-        // ANTES: const enlaceDirectoImagen = driveItem["@microsoft.graph.downloadUrl"]; ❌ CADUCA
-        // AHORA: GUARDAMOS SOLO EL ID ✅
-        return archivoId; // 👈 CAMBIO CRÍTICO
+        console.log("✅ [ONEDRIVE] ARCHIVO SUBIDO CORRECTAMENTE. ID GUARDADO:", archivoId);
+        return archivoId; // 👈 ESTE ID ES EL que debemos guardar en la BD
 
     } catch (err) {
         console.error("🔴 [ONEDRIVE] ERROR TOTAL EN SUBIDA:", err.message);
@@ -1208,8 +1206,7 @@ app.get('/api/imagen/:id', async (req, res) => {
 
 
 
-// ✅ RUTA FALTANTE: Descargar / Ver archivos (PDF, etc.) - SOLUCIÓN AL ERROR 404
-// ✅ RUTA CORREGIDA - FUNCIONA CON TU ID
+// ✅ RUTA CORREGIDA Y FUNCIONAL 100%
 app.get('/api/descargar-archivo/:id', async (req, res) => {
     try {
         const token = await obtenerTokenValido();
@@ -1217,8 +1214,8 @@ app.get('/api/descargar-archivo/:id', async (req, res) => {
 
         console.log("🔍 Probando descarga con ID:", archivoId);
 
-        // 👇 ESTA ES LA LÍNEA CLAVE QUE CAMBIAMOS 👇
-        const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/items/${archivoId}?$select=@microsoft.graph.downloadUrl`;
+        // ✅ RUTA CORRECTA PARA OBTENER EL ENLACE DE DESCARGA DIRECTO POR ID
+        const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/items/${archivoId}?$select=id,name,@microsoft.graph.downloadUrl`;
         
         const respuesta = await fetch(url, {
             method: 'GET',
@@ -1237,17 +1234,19 @@ app.get('/api/descargar-archivo/:id', async (req, res) => {
         const datosArchivo = await respuesta.json();
         const enlaceDescarga = datosArchivo['@microsoft.graph.downloadUrl'];
 
-        if (!enlaceDescarga) throw new Error("No se generó el enlace");
+        if (!enlaceDescarga) throw new Error("No se generó el enlace de descarga");
 
-        // Redirige al archivo real
+        console.log("✅ ENLACE GENERADO CORRECTAMENTE, REDIRIGIENDO...");
+
+        // ✅ REDIRIGE AL ARCHIVO REAL (ENLACE TEMPORAL PERO VÁLIDO)
         res.redirect(enlaceDescarga);
 
     } catch (err) {
-        console.error("🔴 ERROR:", err.message);
+        console.error("🔴 ERROR AL DESCARGAR:", err.message);
         res.status(404).send(`
             <html>
                 <body style="font-family: Arial; text-align: center; padding-top: 50px;">
-                    <h2 style="color: #ef4444;">❌ Archivo no encontrado</h2>
+                    <h2 style="color: #ef4444;">❌ Archivo no encontrado o ID inválido</h2>
                     <p>ID usado: ${req.params.id}</p>
                     <p>Error: ${err.message}</p>
                     <a href="javascript:history.back()">← Volver</a>
