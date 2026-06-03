@@ -124,6 +124,34 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
     }
 }
 
+// ✅ ✅ ✅ NUEVA RUTA: GENERA ENLACE VÁLIDO AL INSTANTE (NO CADUCA NUNCA MÁS)
+app.get('/api/descargar-archivo/:id', verificarToken, async (req, res) => {
+    try {
+        const token = await obtenerTokenValido(); // Reutiliza tu función que mantiene el token vivo
+        const archivoId = req.params.id;
+
+        // 🟡 PEDIMOS A MICROSOFT UN ENLACE NUEVO Y VÁLIDO AHORA MISMO
+        const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/items/${archivoId}?$select=id,@microsoft.graph.downloadUrl`;
+        
+        const respuesta = await fetch(url, {
+            headers: { Authorization: `Bearer ${token}` }
+        });
+
+        if (!respuesta.ok) throw new Error("No se pudo obtener el enlace");
+
+        const datos = await respuesta.json();
+        const enlaceNuevo = datos["@microsoft.graph.downloadUrl"];
+
+        // 🔴 REDIRIGIMOS AL USUARIO AL ENLACE QUE ACABAMOS DE CREAR (SIEMPRE VÁLIDO)
+        res.redirect(enlaceNuevo);
+
+    } catch (err) {
+        console.error("Error al generar enlace:", err);
+        res.status(404).send("Archivo no disponible o error de permisos");
+    }
+});
+
+
 // ✅ ==== AÑADE ESTA FUNCIÓN NUEVA, ES PARA LEER / LISTAR ====
 async function listarArchivosDeOneDrive(subFolder = '') {
     try {
