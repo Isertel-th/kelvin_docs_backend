@@ -116,7 +116,7 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
         // ==================================================
         // ANTES: const enlaceDirectoImagen = driveItem["@microsoft.graph.downloadUrl"]; ❌ CADUCA
         // AHORA: GUARDAMOS SOLO EL ID ✅
-        return archivoId; // 👈 CAMBIO CRÍTICO
+            return fileName; // fileName es la variable que creamos: Fecha_NombreOriginal
 
     } catch (err) {
         console.error("🔴 [ONEDRIVE] ERROR TOTAL EN SUBIDA:", err.message);
@@ -135,30 +135,31 @@ const verificarToken = (req, res, next) => {
 };
 
 
-// ✅ ✅ ✅ NUEVA RUTA: GENERA ENLACE VÁLIDO AL INSTANTE (NO CADUCA NUNCA MÁS)
-app.get('/api/descargar-archivo/:id', verificarToken, async (req, res) => {
-    try {
-        const token = await obtenerTokenValido(); // Reutiliza tu función que mantiene el token vivo
-        const archivoId = req.params.id;
 
-        // 🟡 PEDIMOS A MICROSOFT UN ENLACE NUEVO Y VÁLIDO AHORA MISMO
-        const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/items/${archivoId}?$select=id,@microsoft.graph.downloadUrl`;
+// ✅ ✅ ✅ NUEVA RUTA CORREGIDA: BUSCA POR RUTA / NOMBRE (100% CONFIABLE)
+app.get('/api/descargar-archivo/:nombreArchivo', verificarToken, async (req, res) => {
+    try {
+        const token = await obtenerTokenValido();
+        const nombreArchivo = req.params.nombreArchivo;
+
+        // 📍 BUSCAMOS POR RUTA EXACTA, IGUAL QUE CUANDO SE SUBIÓ
+        const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/root:/Documentos_Isertel_Sistema/${nombreArchivo}:/content`;
         
         const respuesta = await fetch(url, {
-            headers: { Authorization: `Bearer ${token}` }
+            headers: { Authorization: `Bearer ${token}` },
+            redirect: 'manual' // 👈 Importante para que devuelva el enlace real
         });
 
-        if (!respuesta.ok) throw new Error("No se pudo obtener el enlace");
+        // Microsoft devuelve la URL real en los encabezados
+        const enlaceReal = respuesta.headers.get('location');
+        
+        if (!enlaceReal) throw new Error("No se pudo generar el enlace");
 
-        const datos = await respuesta.json();
-        const enlaceNuevo = datos["@microsoft.graph.downloadUrl"];
-
-        // 🔴 REDIRIGIMOS AL USUARIO AL ENLACE QUE ACABAMOS DE CREAR (SIEMPRE VÁLIDO)
-        res.redirect(enlaceNuevo);
+        res.redirect(enlaceReal);
 
     } catch (err) {
-        console.error("Error al generar enlace:", err);
-        res.status(404).send("Archivo no disponible o error de permisos");
+        console.error("❌ Error al generar enlace:", err.message);
+        res.status(404).send("Archivo no encontrado o error de permisos");
     }
 });
 
