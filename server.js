@@ -1205,13 +1205,12 @@ app.get('/api/imagen/:id', async (req, res) => {
 
 
 
-// ✅ RUTA CORREGIDA Y FUNCIONAL 100%
-// ✅ RUTA DE DESCARGA POR RUTA (LA MÁS SEGURA)
-app.get('/api/descargar-archivo/*', async (req, res) => { // Usamos * para capturar toda la ruta
+// ✅ RUTA DE DESCARGA POR RUTA - VERSIÓN COMPATIBLE 100%
+app.get('/api/descargar-archivo/:ruta(*)', async (req, res) => { // ✅ SINTAXIS CORREGIDA
     try {
         const token = await obtenerTokenValido();
-        // ✅ Capturamos la ruta completa que guardamos en la BD
-        const rutaCompleta = req.params[0]; 
+        // ✅ Capturamos la ruta completa con el nuevo nombre
+        const rutaCompleta = req.params.ruta; 
         console.log("🔍 Descargando por RUTA:", rutaCompleta);
 
         // ✅ Consultamos directamente por la ruta, NO por ID
@@ -1248,7 +1247,7 @@ app.get('/api/descargar-archivo/*', async (req, res) => { // Usamos * para captu
             <html>
                 <body style="font-family: Arial; text-align: center; padding-top: 50px;">
                     <h2 style="color: #ef4444;">❌ Archivo no encontrado o ruta inválida</h2>
-                    <p>Ruta buscada: ${req.params[0]}</p>
+                    <p>Ruta buscada: ${req.params.ruta}</p>
                     <p>Verifica que la carpeta <b>Documentos_Isertel_Sistema</b> exista en tu OneDrive.</p>
                     <a href="javascript:history.back()">← Volver</a>
                 </body>
@@ -1256,6 +1255,5 @@ app.get('/api/descargar-archivo/*', async (req, res) => { // Usamos * para captu
         `);
     }
 });
-
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
