@@ -110,12 +110,13 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
         const driveItem = await res.json();
         const archivoId = driveItem.id; 
         
-        // ✅ AHORA RETORNAMOS OBJETO CON ID Y RUTA
-        return { 
-            id: archivoId, 
-            rutaCompleta: rutaCompleta,
-            nombreArchivo: fileName
-        };
+        // ==================================================
+        // ✅ SOLUCIÓN DEFINITIVA: YA NO GUARDAMOS EL ENLACE QUE CADUCA
+        // ✅ GUARDAMOS SOLO EL ID DEL ARCHIVO (ES PERMANENTE)
+        // ==================================================
+        // ANTES: const enlaceDirectoImagen = driveItem["@microsoft.graph.downloadUrl"]; ❌ CADUCA
+        // AHORA: GUARDAMOS SOLO EL ID ✅
+        return archivoId; // 👈 CAMBIO CRÍTICO
 
     } catch (err) {
         console.error("🔴 [ONEDRIVE] ERROR TOTAL EN SUBIDA:", err.message);
@@ -678,6 +679,7 @@ app.delete('/api/kelvin/documentos/:id', verificarToken, permisoAdminDoc, async 
 // ==========================================
 
 app.post('/api/empresa/documentos', verificarToken, upload.single('archivo'), async (req, res) => {
+    // Reemplazado 'admin' por 'Talento Humano'
     if (req.user.rol !== 'Talento Humano') {
         return res.status(403).json({ error: 'No tienes permisos para subir documentos de empresa' });
     }
@@ -697,21 +699,13 @@ app.post('/api/empresa/documentos', verificarToken, upload.single('archivo'), as
     const nombre_original = req.file.originalname;
 
     try {
-        // ✅ AHORA RECIBIMOS EL OBJETO COMPLETO
-        const archivoData = await subirAOneDrive(req.file.buffer, req.file.originalname, 'Documentos_Empresa');
-        
-        // ✅ GUARDAMOS ID Y RUTA EN LA BD (asegúrate de tener estos campos en tu tabla o usamos la ruta como url_cloudinary)
+        const archivo_url = await subirAOneDrive(req.file.buffer, req.file.originalname, 'Documentos_Empresa');
         const query = `
-            INSERT INTO documentos_empresa (tipo_documento, url_cloudinary, nombre_archivo, ruta_completa)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO documentos_empresa (tipo_documento, url_cloudinary, nombre_archivo)
+            VALUES ($1, $2, $3)
             RETURNING *
         `;
-        const result = await pool.query(query, [
-            tipo_documento, 
-            archivoData.id, // Guardamos el ID para descargar
-            nombre_original, 
-            archivoData.rutaCompleta // Guardamos la ruta completa
-        ]);
+        const result = await pool.query(query, [tipo_documento, archivo_url, nombre_original]);
         res.json({ message: 'Ok', documento: result.rows[0] });
     } catch (err) {
         console.error(err);
@@ -1209,47 +1203,6 @@ app.get('/api/imagen/:id', async (req, res) => {
     } catch (err) {
         // Si hay error, devolvemos la imagen por defecto
         res.redirect('https://via.placeholder.com/150');
-    }
-});
-
-
-// ✅ RUTA DE DESCARGA CORREGIDA - SOLUCIONA EL ERROR 404
-app.get('/api/descargar-archivo/:idArchivo', async (req, res) => {
-    try {
-        const { idArchivo } = req.params;
-        
-        // 1. Obtener token válido
-        const token = await obtenerTokenValido();
-
-        // 2. Construir URL de descarga usando el ID (es la forma más segura y no importa la carpeta)
-        const urlDescarga = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/items/${idArchivo}/content`;
-
-        // 3. Petición a OneDrive
-        const respuesta = await fetch(urlDescarga, {
-            method: 'GET',
-            headers: {
-                'Authorization': `Bearer ${token}`
-            }
-        });
-
-        if (!respuesta.ok) {
-            throw new Error(`Error al obtener archivo: ${respuesta.status}`);
-        }
-
-        // 4. Obtener nombre original desde la BD para descargar bien nombrado
-        const resultadoBD = await pool.query('SELECT nombre_archivo FROM documentos_empresa WHERE url_cloudinary = $1', [idArchivo]);
-        const nombreArchivo = resultadoBD.rows[0]?.nombre_archivo || 'documento.pdf';
-
-        // 5. Configurar encabezados para la descarga
-        res.setHeader('Content-Disposition', `attachment; filename="${nombreArchivo}"`);
-        res.setHeader('Content-Type', 'application/pdf');
-
-        // 6. Enviar el archivo al usuario
-        respuesta.body.pipe(res);
-
-    } catch (err) {
-        console.error("🔴 ERROR DESCARGA:", err);
-        res.status(404).json({ error: 'Archivo no encontrado o ruta incorrecta' });
     }
 });
 
