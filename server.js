@@ -69,14 +69,12 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
         const token = await obtenerTokenValido();
         console.log("🔵 [ONEDRIVE] Token válido obtenido correctamente"); 
 
-        // Limpieza de caracteres
         const cleanOriginalName = originalName
             .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
             .replace(/[^a-zA-Z0-9._-]/g, "_");
 
         const fileName = `${Date.now()}_${cleanOriginalName}`;
         
-        // ✅ RUTA COMPLETA: Nosotros la creamos, nosotros la controlamos
         let rutaCompleta = 'Documentos_Isertel_Sistema/';
         if (subFolder) {
             const subFolderLimpio = subFolder
@@ -110,10 +108,15 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
         }
 
         const driveItem = await res.json();
+        const archivoId = driveItem.id; 
         
-        // 🔴 CAMBIO CRÍTICO: YA NO GUARDAMOS EL ID, GUARDAMOS LA RUTA
-        console.log("✅ [ONEDRIVE] ARCHIVO SUBIDO CORRECTAMENTE. RUTA GUARDADA:", rutaCompleta);
-        return rutaCompleta; // <--- ESTO ES LO QUE SE GUARDA EN LA BD AHORA
+        // ==================================================
+        // ✅ SOLUCIÓN DEFINITIVA: YA NO GUARDAMOS EL ENLACE QUE CADUCA
+        // ✅ GUARDAMOS SOLO EL ID DEL ARCHIVO (ES PERMANENTE)
+        // ==================================================
+        // ANTES: const enlaceDirectoImagen = driveItem["@microsoft.graph.downloadUrl"]; ❌ CADUCA
+        // AHORA: GUARDAMOS SOLO EL ID ✅
+        return archivoId; // 👈 CAMBIO CRÍTICO
 
     } catch (err) {
         console.error("🔴 [ONEDRIVE] ERROR TOTAL EN SUBIDA:", err.message);
@@ -1203,62 +1206,5 @@ app.get('/api/imagen/:id', async (req, res) => {
     }
 });
 
-
-
-// ✅ RUTA DE DESCARGA POR RUTA - VERSIÓN COMPATIBLE 100%
-// ✅ RUTA DE DESCARGA - SINTAXIS COMPATIBLE CON TODAS LAS VERSIONES
-app.get('/api/descargar-archivo/', (req, res) => {
-    // Redirige si falta la barra final o corrige, pero lo importante es capturar todo
-}, async (req, res) => {
-    try {
-        const token = await obtenerTokenValido();
-        
-        // 📌 TRUCO DEFINITIVO: Capturamos la URL completa manualmente
-        // Esto funciona SIEMPRE, no importa la versión de Express
-        const rutaCompleta = req.url.replace('/api/descargar-archivo/', '');
-
-        console.log("🔍 Descargando por RUTA:", rutaCompleta);
-
-        // ✅ Consultamos directamente por la ruta, NO por ID
-        const rutaCodificada = encodeURIComponent(rutaCompleta);
-        const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/root:/${rutaCodificada}:/content`;
-        
-        console.log("🔗 URL FINAL DE CONSULTA:", url);
-
-        const respuesta = await fetch(url, {
-            method: 'GET',
-            headers: { 
-                'Authorization': `Bearer ${token}`
-            },
-            redirect: 'manual' 
-        });
-
-        // Microsoft nos devuelve el enlace temporal directo
-        if (respuesta.status === 302 || respuesta.status === 200) {
-            const enlaceDescarga = respuesta.headers.get('location');
-            if(enlaceDescarga){
-                return res.redirect(enlaceDescarga);
-            }
-        }
-
-        if (!respuesta.ok) {
-            const errorDetalle = await respuesta.text();
-            console.error("❌ ERROR MICROSOFT:", respuesta.status, errorDetalle);
-            throw new Error(`Archivo no encontrado - Código: ${respuesta.status}`);
-        }
-
-    } catch (err) {
-        console.error("🔴 ERROR AL DESCARGAR:", err.message);
-        res.status(404).send(`
-            <html>
-                <body style="font-family: Arial; text-align: center; padding-top: 50px;">
-                    <h2 style="color: #ef4444;">❌ Archivo no encontrado o ruta inválida</h2>
-                    <p>Verifica que la carpeta <b>Documentos_Isertel_Sistema</b> exista en tu OneDrive.</p>
-                    <a href="javascript:history.back()">← Volver</a>
-                </body>
-            </html>
-        `);
-    }
-});
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
