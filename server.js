@@ -124,6 +124,17 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
     }
 }
 
+const verificarToken = (req, res, next) => {
+    const token = req.header('Authorization');
+    if (!token) return res.status(401).json({ error: 'Acceso denegado' });
+    try {
+        const verificado = jwt.verify(token.replace('Bearer ', ''), process.env.JWT_SECRET);
+        req.user = verificado;
+        next();
+    } catch (err) { res.status(400).json({ error: 'Token no válido' }); }
+};
+
+
 // ✅ ✅ ✅ NUEVA RUTA: GENERA ENLACE VÁLIDO AL INSTANTE (NO CADUCA NUNCA MÁS)
 app.get('/api/descargar-archivo/:id', verificarToken, async (req, res) => {
     try {
@@ -150,6 +161,14 @@ app.get('/api/descargar-archivo/:id', verificarToken, async (req, res) => {
         res.status(404).send("Archivo no disponible o error de permisos");
     }
 });
+
+
+const permisoAdminDoc = (req, res, next) => {
+    // ✅ TODOS LOS USUARIOS PUEDEN VER LAS LISTAS DE EMPLEADOS
+    // Porque todos los usuarios registrados tienen acceso a ver activos y pasivos
+    // La restricción real está dentro de los documentos, no en la lista
+    next(); 
+};
 
 
 // ✅ ==== AÑADE ESTA FUNCIÓN NUEVA, ES PARA LEER / LISTAR ====
@@ -217,22 +236,8 @@ const esCorreoValido = (email) => {
     return dominiosPermitidos.includes(dominio);
 };
 
-const verificarToken = (req, res, next) => {
-    const token = req.header('Authorization');
-    if (!token) return res.status(401).json({ error: 'Acceso denegado' });
-    try {
-        const verificado = jwt.verify(token.replace('Bearer ', ''), process.env.JWT_SECRET);
-        req.user = verificado;
-        next();
-    } catch (err) { res.status(400).json({ error: 'Token no válido' }); }
-};
 
-const permisoAdminDoc = (req, res, next) => {
-    // ✅ TODOS LOS USUARIOS PUEDEN VER LAS LISTAS DE EMPLEADOS
-    // Porque todos los usuarios registrados tienen acceso a ver activos y pasivos
-    // La restricción real está dentro de los documentos, no en la lista
-    next(); 
-};
+
 
 // --- RUTAS ---
 
