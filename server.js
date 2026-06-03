@@ -75,10 +75,7 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
 
         const fileName = `${Date.now()}_${cleanOriginalName}`;
         
-        // ✅ ✅ ✅ RUTA EXACTA IGUAL QUE TU ENLACE:
-        // /Documents/Documentos_Isertel_Sistema/[SUBCARPETA]/archivo.pdf
-        let rutaCompleta = 'Documents/Documentos_Isertel_Sistema/'; 
-        
+        let rutaCompleta = 'Documentos_Isertel_Sistema/';
         if (subFolder) {
             const subFolderLimpio = subFolder
                 .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
@@ -91,7 +88,7 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
         
         const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/root:/${rutaCodificada}:/content`;
 
-        console.log("🔗 URL CORRECTA:", url); // Verás que ahora coincide con tu enlace
+        console.log("🔗 URL de subida:", url);
 
         const res = await fetch(url, {
             method: 'PUT',
@@ -102,68 +99,30 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
             body: buffer
         });
         
+        console.log("🟡 [ONEDRIVE] Respuesta de Microsoft - Estado:", res.status);
+
         if (!res.ok) {
             const errText = await res.text();
-            console.error("🔴 ERROR MICROSOFT:", res.status, errText);
-            throw new Error(`Error OneDrive: ${res.status}`);
+            console.error("🔴 [ONEDRIVE] ERROR MICROSOFT:", res.status, " | Detalle:", errText);
+            throw new Error(`Error OneDrive: ${res.status} - ${errText}`);
         }
 
         const driveItem = await res.json();
+        const archivoId = driveItem.id; 
         
-        // ✅ GUARDAMOS EL ID (lo más seguro)
-        return driveItem.id; 
+        // ==================================================
+        // ✅ SOLUCIÓN DEFINITIVA: YA NO GUARDAMOS EL ENLACE QUE CADUCA
+        // ✅ GUARDAMOS SOLO EL ID DEL ARCHIVO (ES PERMANENTE)
+        // ==================================================
+        // ANTES: const enlaceDirectoImagen = driveItem["@microsoft.graph.downloadUrl"]; ❌ CADUCA
+        // AHORA: GUARDAMOS SOLO EL ID ✅
+        return archivoId; // 👈 CAMBIO CRÍTICO
 
     } catch (err) {
-        console.error("🔴 ERROR TOTAL:", err.message);
+        console.error("🔴 [ONEDRIVE] ERROR TOTAL EN SUBIDA:", err.message);
         throw err;
     }
 }
-
-const verificarToken = (req, res, next) => {
-    const token = req.header('Authorization');
-    if (!token) return res.status(401).json({ error: 'Acceso denegado' });
-    try {
-        const verificado = jwt.verify(token.replace('Bearer ', ''), process.env.JWT_SECRET);
-        req.user = verificado;
-        next();
-    } catch (err) { res.status(400).json({ error: 'Token no válido' }); }
-};
-
-
-
-// ✅ RUTA DE DESCARGA DEFINITIVA
-app.get('/api/descargar-archivo/:id', verificarToken, async (req, res) => {
-    try {
-        const token = await obtenerTokenValido();
-        const archivoId = req.params.id;
-
-        // 📡 BUSCA DIRECTAMENTE POR ID, NO IMPORTA EN QUÉ CARPETA ESTÉ
-        const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/items/${archivoId}/content`;
-        
-        const respuesta = await fetch(url, {
-            method: 'GET',
-            headers: { 'Authorization': `Bearer ${token}` },
-            redirect: 'follow'
-        });
-
-        // 🚀 Enviamos el archivo al navegador
-        res.setHeader('Content-Type', respuesta.headers.get('Content-Type') || 'application/pdf');
-        respuesta.body.pipe(res);
-
-    } catch (err) {
-        console.error("❌ ERROR:", err.message);
-        res.status(404).send(`No se encontró el archivo o error: ${err.message}`);
-    }
-});
-
-
-const permisoAdminDoc = (req, res, next) => {
-    // ✅ TODOS LOS USUARIOS PUEDEN VER LAS LISTAS DE EMPLEADOS
-    // Porque todos los usuarios registrados tienen acceso a ver activos y pasivos
-    // La restricción real está dentro de los documentos, no en la lista
-    next(); 
-};
-
 
 // ✅ ==== AÑADE ESTA FUNCIÓN NUEVA, ES PARA LEER / LISTAR ====
 async function listarArchivosDeOneDrive(subFolder = '') {
@@ -230,8 +189,22 @@ const esCorreoValido = (email) => {
     return dominiosPermitidos.includes(dominio);
 };
 
+const verificarToken = (req, res, next) => {
+    const token = req.header('Authorization');
+    if (!token) return res.status(401).json({ error: 'Acceso denegado' });
+    try {
+        const verificado = jwt.verify(token.replace('Bearer ', ''), process.env.JWT_SECRET);
+        req.user = verificado;
+        next();
+    } catch (err) { res.status(400).json({ error: 'Token no válido' }); }
+};
 
-
+const permisoAdminDoc = (req, res, next) => {
+    // ✅ TODOS LOS USUARIOS PUEDEN VER LAS LISTAS DE EMPLEADOS
+    // Porque todos los usuarios registrados tienen acceso a ver activos y pasivos
+    // La restricción real está dentro de los documentos, no en la lista
+    next(); 
+};
 
 // --- RUTAS ---
 
