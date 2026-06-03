@@ -69,13 +69,11 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
         const token = await obtenerTokenValido();
         console.log("🔵 [ONEDRIVE] Token válido obtenido correctamente"); 
 
-        // 🧹 Limpiamos el nombre original (sin números)
         const cleanOriginalName = originalName
             .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
             .replace(/[^a-zA-Z0-9._-]/g, "_");
 
-        // ✅ Nombre con números (solo para guardar en OneDrive y evitar duplicados)
-        const fileNameUnico = `${Date.now()}_${cleanOriginalName}`;
+        const fileName = `${Date.now()}_${cleanOriginalName}`;
         
         let rutaCompleta = 'Documentos_Isertel_Sistema/';
         if (subFolder) {
@@ -84,7 +82,7 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
                 .replace(/[^a-zA-Z0-9._-]/g, "_");
             rutaCompleta += `${subFolderLimpio}/`;
         }
-        rutaCompleta += fileNameUnico;
+        rutaCompleta += fileName;
 
         const rutaCodificada = encodeURIComponent(rutaCompleta);
         
@@ -112,12 +110,13 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
         const driveItem = await res.json();
         const archivoId = driveItem.id; 
         
-        // ✅ AHORA DEVOLVEMOS LO QUE NECESITAMOS:
-        return { 
-            id: archivoId,               // ID para usar en tu ruta /api/descargar/:id
-            nombreOriginal: cleanOriginalName,  // Nombre LIMPIO para mostrar y descargar
-            nombreEnNube: fileNameUnico   // Nombre con números (por si lo necesitas ver)
-        };
+        // ==================================================
+        // ✅ SOLUCIÓN DEFINITIVA: YA NO GUARDAMOS EL ENLACE QUE CADUCA
+        // ✅ GUARDAMOS SOLO EL ID DEL ARCHIVO (ES PERMANENTE)
+        // ==================================================
+        // ANTES: const enlaceDirectoImagen = driveItem["@microsoft.graph.downloadUrl"]; ❌ CADUCA
+        // AHORA: GUARDAMOS SOLO EL ID ✅
+        return archivoId; // 👈 CAMBIO CRÍTICO
 
     } catch (err) {
         console.error("🔴 [ONEDRIVE] ERROR TOTAL EN SUBIDA:", err.message);
@@ -406,7 +405,6 @@ app.post('/api/admin/mover-a-pasivo/:id', verificarToken, async (req, res) => {
 app.post('/api/admin/subir-a-usuario', verificarToken, permisoAdminDoc, upload.single('archivo'), async (req, res) => {
     console.log("🟡 [RUTA SUBIR] Usuario conectado - ROL:", req.user.rol, " | ID Usuario:", req.user.id);
     console.log("🟡 [RUTA SUBIR] Datos recibidos:", req.body.tipo_documento, req.body.usuario_id);
-
     if (!req.file) return res.status(400).json({ error: 'El archivo es obligatorio.' });
     
     const { tipo_documento, subtipo_documento, usuario_id, nombre_user, es_pasivo, nombre_archivo, fecha_documento, periodo } = req.body;
@@ -424,65 +422,32 @@ app.post('/api/admin/subir-a-usuario', verificarToken, permisoAdminDoc, upload.s
         tabla = es_pasivo === 'true' ? 'documentos_pasivos' : 'documentos';
     }
 
-    // ✅ Validación de tabla permitida
-    const tablasPermitidas = ['certifi_competencia', 'acta_epps', 'docus_medicos', 'certificados_aptitud', 'documentos', 'documentos_pasivos'];
-    if (!tablasPermitidas.includes(tabla)) {
-        return res.status(400).json({ error: 'Tipo de documento no válido' });
-    }
-
-    const estadoUsuario = es_pasivo === 'true' ? 'Pasivo' : 'Active';
+    const estadoUsuario = es_pasivo === 'true' ? 'Pasivo' : 'Active'; // Mapeo dinámico para la nueva columna
 
     try {
-        console.log("🟡 [RUTA SUBIR] Llamando al servicio de OneDrive...");
-        // ✅ AHORA RECIBIMOS URL, ID Y NOMBRE LIMPIO
-        const archivoData = await subirAOneDrive(req.file.buffer, req.file.originalname, tipo_documento);
-        
-        const id_onedrive = archivoData.id;
-        const url_descarga = archivoData.url; // ✅ ESTE ES EL ENLACE QUE USARÁS PARA DESCARGAR
-        const nombreLimpio = archivoData.nombreReal; // ✅ NOMBRE SIN LOS NÚMEROS EXTRA
+                console.log("🟡 [RUTA SUBIR] Llamando al servicio de OneDrive...");
 
+        const url_onedrive = await subirAOneDrive(req.file.buffer, req.file.originalname, tipo_documento);
         console.log("🟢 [RUTA SUBIR] ÉXITO: Archivo subido, guardando en BD...");
 
         if (tabla === 'acta_epps' || tabla === 'certifi_competencia') {
             await pool.query(
-                `INSERT INTO ${tabla} (usuario_id, tipo_documento, subtipo_documento, url_descarga, id_onedrive, nombre_user, nombre_archivo, fecha_documento, periodo, estado, nombre_real_archivo) 
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`, 
-                [
-                    usuario_id, 
-                    tipo_documento, 
-                    subtipo_documento || 'General / Único', 
-                    url_descarga,  // ✅ GUARDAMOS EL ENLACE AQUÍ
-                    id_onedrive,   // ✅ GUARDAMOS EL ID POR SI LO NECESITAS
-                    nombre_user, 
-                    nombre_archivo, 
-                    fecha_documento || null, 
-                    periodo || null, 
-                    estadoUsuario,
-                    nombreLimpio   // ✅ GUARDAMOS EL NOMBRE LIMPIO
-                ]
+                `INSERT INTO ${tabla} (usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, estado) 
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, 
+                [usuario_id, tipo_documento, subtipo_documento || 'General / Único', url_onedrive, nombre_user, nombre_archivo, fecha_documento || null, periodo || null, estadoUsuario]
             );
         } else {
             await pool.query(
-                `INSERT INTO ${tabla} (usuario_id, tipo_documento, subtipo_documento, url_descarga, id_onedrive, nombre_user, nombre_archivo, fecha_documento, periodo, nombre_real_archivo) 
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`, 
-                [
-                    usuario_id, 
-                    tipo_documento, 
-                    subtipo_documento || 'General / Único', 
-                    url_descarga,  // ✅ ENLACE DE DESCARGA
-                    id_onedrive,   // ✅ ID INTERNO
-                    nombre_user, 
-                    nombre_archivo, 
-                    fecha_documento || null, 
-                    periodo || null,
-                    nombreLimpio   // ✅ NOMBRE SIN NÚMEROS
-                ]
+                `INSERT INTO ${tabla} (usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo) 
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, 
+                [usuario_id, tipo_documento, subtipo_documento || 'General / Único', url_onedrive, nombre_user, nombre_archivo, fecha_documento || null, periodo || null]
             );
         }
-
         res.json({ message: 'Ok' });
     } catch (err) { 
-        console.error("🔴 [RUTA SUBIR] FALLO GENERAL:", err.message);
+
+                console.error("🔴 [RUTA SUBIR] FALLO GENERAL:", err.message);
+
         res.status(500).json({ error: err.message });
     }
 });
@@ -1246,37 +1211,52 @@ app.get('/api/imagen/:id', async (req, res) => {
 // ✅ NUEVA RUTA: Obtener archivo por ID (SOLUCIÓN AL ERROR 404)
 app.get('/api/descargar/:id', async (req, res) => {
     try {
+        // 1. Obtener un token válido (reutilizando tu función existente)
         const token = await obtenerTokenValido();
+
+        // 2. Construir la URL oficial de Microsoft Graph usando EL ID GUARDADO
         const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/items/${req.params.id}/content`;
 
+        // 3. Petición a Microsoft para obtener el archivo
         const respuesta = await fetch(url, {
             method: 'GET',
-            headers: { 'Authorization': `Bearer ${token}` }
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
         });
 
-        if (!respuesta.ok) throw new Error('No se pudo acceder');
+        if (!respuesta.ok) {
+            throw new Error('No se pudo acceder al archivo en la nube');
+        }
 
-        // ✅ OBTENEMOS EL NOMBRE REAL QUE GUARDAMOS EN LA BD
+        // ✅ CAMBIO: Leer el nombre original de la base de datos
+        // Consultamos el nombre del archivo según el ID
         const consultaNombre = await pool.query(`
             SELECT nombre_archivo FROM documentos WHERE url_cloudinary = $1
-            UNION ALL SELECT nombre_archivo FROM documentos_pasivos WHERE url_cloudinary = $1
-            UNION ALL SELECT nombre_archivo FROM acta_epps WHERE url_cloudinary = $1
-            UNION ALL SELECT nombre_archivo FROM certifi_competencia WHERE url_cloudinary = $1
-            UNION ALL SELECT nombre_archivo FROM docus_medicos WHERE url_cloudinary = $1
-            UNION ALL SELECT nombre_archivo FROM certificados_aptitud WHERE url_cloudinary = $1
-            UNION ALL SELECT nombre_archivo FROM documentos_empresa WHERE url_cloudinary = $1
+            UNION ALL
+            SELECT nombre_archivo FROM documentos_pasivos WHERE url_cloudinary = $1
+            UNION ALL
+            SELECT nombre_archivo FROM acta_epps WHERE url_cloudinary = $1
+            UNION ALL
+            SELECT nombre_archivo FROM certifi_competencia WHERE url_cloudinary = $1
+            UNION ALL
+            SELECT nombre_archivo FROM docus_medicos WHERE url_cloudinary = $1
+            UNION ALL
+            SELECT nombre_archivo FROM certificados_aptitud WHERE url_cloudinary = $1
         `, [req.params.id]);
 
-        const nombreDescarga = consultaNombre.rows[0]?.nombre_archivo || 'archivo.pdf';
+        const nombreArchivo = consultaNombre.rows[0]?.nombre_archivo || 'documento.pdf';
 
-        // ✅ FORZAMOS QUE EL NOMBRE DE DESCARGA SEA EL MISMO QUE TIENE EN ONEDRIVE
-        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(nombreDescarga)}"`);
+        // ✅ CAMBIO: Forzar nombre y tipo PDF
+        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(nombreArchivo)}"`);
         res.setHeader('Content-Type', 'application/pdf');
+        
+        // Enviar el flujo de datos
         respuesta.body.pipe(res);
 
     } catch (err) {
         console.error("🔴 ERROR AL DESCARGAR:", err);
-        res.status(404).send("❌ Archivo no encontrado o error en el enlace");
+        res.status(404).send("Archivo no encontrado o enlace caducado");
     }
 });
 
