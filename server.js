@@ -1206,5 +1206,41 @@ app.get('/api/imagen/:id', async (req, res) => {
     }
 });
 
+
+// ✅ RUTA DEFINITIVA PARA VER Y DESCARGAR ARCHIVOS
+app.get('/api/descargar-archivo/:archivoId', async (req, res) => {
+    try {
+        const { archivoId } = req.params;
+        const token = await obtenerTokenValido(); // Reutilizamos tu función ya creada
+
+        // 📌 Endpoint de Microsoft Graph para obtener el enlace de descarga
+        const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/items/${archivoId}`;
+
+        const respuesta = await fetch(url, {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+
+        if (!respuesta.ok) {
+            throw new Error(`No se pudo obtener el archivo: ${respuesta.status}`);
+        }
+
+        const datosArchivo = await respuesta.json();
+        const enlaceDescarga = datosArchivo["@microsoft.graph.downloadUrl"]; // Este enlace SÍ funciona
+
+        if (!enlaceDescarga) {
+            return res.status(404).send("Archivo no encontrado o enlace no disponible");
+        }
+
+        // ✅ Redirigimos al enlace real de OneDrive (es válido por unas horas)
+        res.redirect(enlaceDescarga);
+
+    } catch (err) {
+        console.error("❌ Error al descargar:", err.message);
+        res.status(404).send("El archivo no se encontraba disponible en el sitio.");
+    }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
