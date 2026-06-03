@@ -75,7 +75,10 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
 
         const fileName = `${Date.now()}_${cleanOriginalName}`;
         
-        let rutaCompleta = 'Documentos_Isertel_Sistema/';
+        // ✅ ✅ ✅ RUTA EXACTA IGUAL QUE TU ENLACE:
+        // /Documents/Documentos_Isertel_Sistema/[SUBCARPETA]/archivo.pdf
+        let rutaCompleta = 'Documents/Documentos_Isertel_Sistema/'; 
+        
         if (subFolder) {
             const subFolderLimpio = subFolder
                 .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
@@ -88,7 +91,7 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
         
         const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/root:/${rutaCodificada}:/content`;
 
-        console.log("🔗 URL de subida:", url);
+        console.log("🔗 URL CORRECTA:", url); // Verás que ahora coincide con tu enlace
 
         const res = await fetch(url, {
             method: 'PUT',
@@ -99,27 +102,19 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
             body: buffer
         });
         
-        console.log("🟡 [ONEDRIVE] Respuesta de Microsoft - Estado:", res.status);
-
         if (!res.ok) {
             const errText = await res.text();
-            console.error("🔴 [ONEDRIVE] ERROR MICROSOFT:", res.status, " | Detalle:", errText);
-            throw new Error(`Error OneDrive: ${res.status} - ${errText}`);
+            console.error("🔴 ERROR MICROSOFT:", res.status, errText);
+            throw new Error(`Error OneDrive: ${res.status}`);
         }
 
         const driveItem = await res.json();
-        const archivoId = driveItem.id; 
         
-        // ==================================================
-        // ✅ SOLUCIÓN DEFINITIVA: YA NO GUARDAMOS EL ENLACE QUE CADUCA
-        // ✅ GUARDAMOS SOLO EL ID DEL ARCHIVO (ES PERMANENTE)
-        // ==================================================
-        // ANTES: const enlaceDirectoImagen = driveItem["@microsoft.graph.downloadUrl"]; ❌ CADUCA
-        // AHORA: GUARDAMOS SOLO EL ID ✅
-            return fileName; // fileName es la variable que creamos: Fecha_NombreOriginal
+        // ✅ GUARDAMOS EL ID (lo más seguro)
+        return driveItem.id; 
 
     } catch (err) {
-        console.error("🔴 [ONEDRIVE] ERROR TOTAL EN SUBIDA:", err.message);
+        console.error("🔴 ERROR TOTAL:", err.message);
         throw err;
     }
 }
@@ -136,37 +131,28 @@ const verificarToken = (req, res, next) => {
 
 
 
-// ✅ ✅ ✅ RUTA CORREGIDA - BUSCA EN LA CARPETA EXACTA DONDE SE SUBIÓ
-app.get('/api/descargar-archivo/:nombreArchivo', verificarToken, async (req, res) => {
+// ✅ RUTA DE DESCARGA DEFINITIVA
+app.get('/api/descargar-archivo/:id', verificarToken, async (req, res) => {
     try {
         const token = await obtenerTokenValido();
-        const nombreArchivo = req.params.nombreArchivo;
+        const archivoId = req.params.id;
 
-        // 🔴 EL ERROR ERA AQUÍ: FALTABA LA SUBCARPETA
-        // Cuando subimos, guardamos en: Documentos_Isertel_Sistema/[TIPO_DOCUMENTO]/nombre.pdf
-        // Ahora vamos a buscar en TODAS las posibles carpetas o armar la ruta correcta
-
-        // ✅ OPCIÓN 1: BUSCAMOS EL ARCHIVO POR NOMBRE EN TODA LA UNIDAD (SEGURO)
-        const urlBusqueda = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/root/search(q='${nombreArchivo}')?$select=id,@microsoft.graph.downloadUrl`;
-
-        const respuestaBusqueda = await fetch(urlBusqueda, {
-            headers: { Authorization: `Bearer ${token}` }
+        // 📡 BUSCA DIRECTAMENTE POR ID, NO IMPORTA EN QUÉ CARPETA ESTÉ
+        const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/items/${archivoId}/content`;
+        
+        const respuesta = await fetch(url, {
+            method: 'GET',
+            headers: { 'Authorization': `Bearer ${token}` },
+            redirect: 'follow'
         });
 
-        const datosBusqueda = await respuestaBusqueda.json();
-        
-        // Si lo encuentra, toma el primer resultado
-        if (datosBusqueda.value && datosBusqueda.value.length > 0) {
-            const enlaceReal = datosBusqueda.value[0]["@microsoft.graph.downloadUrl"];
-            return res.redirect(enlaceReal);
-        }
-
-        // Si no lo encuentra
-        throw new Error("Archivo no encontrado");
+        // 🚀 Enviamos el archivo al navegador
+        res.setHeader('Content-Type', respuesta.headers.get('Content-Type') || 'application/pdf');
+        respuesta.body.pipe(res);
 
     } catch (err) {
-        console.error("❌ Error al generar enlace:", err.message);
-        res.status(404).send("Archivo no encontrado o error de permisos");
+        console.error("❌ ERROR:", err.message);
+        res.status(404).send(`No se encontró el archivo o error: ${err.message}`);
     }
 });
 
