@@ -136,26 +136,33 @@ const verificarToken = (req, res, next) => {
 
 
 
-// ✅ ✅ ✅ NUEVA RUTA CORREGIDA: BUSCA POR RUTA / NOMBRE (100% CONFIABLE)
+// ✅ ✅ ✅ RUTA CORREGIDA - BUSCA EN LA CARPETA EXACTA DONDE SE SUBIÓ
 app.get('/api/descargar-archivo/:nombreArchivo', verificarToken, async (req, res) => {
     try {
         const token = await obtenerTokenValido();
         const nombreArchivo = req.params.nombreArchivo;
 
-        // 📍 BUSCAMOS POR RUTA EXACTA, IGUAL QUE CUANDO SE SUBIÓ
-        const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/root:/Documentos_Isertel_Sistema/${nombreArchivo}:/content`;
-        
-        const respuesta = await fetch(url, {
-            headers: { Authorization: `Bearer ${token}` },
-            redirect: 'manual' // 👈 Importante para que devuelva el enlace real
+        // 🔴 EL ERROR ERA AQUÍ: FALTABA LA SUBCARPETA
+        // Cuando subimos, guardamos en: Documentos_Isertel_Sistema/[TIPO_DOCUMENTO]/nombre.pdf
+        // Ahora vamos a buscar en TODAS las posibles carpetas o armar la ruta correcta
+
+        // ✅ OPCIÓN 1: BUSCAMOS EL ARCHIVO POR NOMBRE EN TODA LA UNIDAD (SEGURO)
+        const urlBusqueda = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/root/search(q='${nombreArchivo}')?$select=id,@microsoft.graph.downloadUrl`;
+
+        const respuestaBusqueda = await fetch(urlBusqueda, {
+            headers: { Authorization: `Bearer ${token}` }
         });
 
-        // Microsoft devuelve la URL real en los encabezados
-        const enlaceReal = respuesta.headers.get('location');
+        const datosBusqueda = await respuestaBusqueda.json();
         
-        if (!enlaceReal) throw new Error("No se pudo generar el enlace");
+        // Si lo encuentra, toma el primer resultado
+        if (datosBusqueda.value && datosBusqueda.value.length > 0) {
+            const enlaceReal = datosBusqueda.value[0]["@microsoft.graph.downloadUrl"];
+            return res.redirect(enlaceReal);
+        }
 
-        res.redirect(enlaceReal);
+        // Si no lo encuentra
+        throw new Error("Archivo no encontrado");
 
     } catch (err) {
         console.error("❌ Error al generar enlace:", err.message);
