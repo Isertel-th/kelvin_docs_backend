@@ -1229,9 +1229,27 @@ app.get('/api/descargar/:id', async (req, res) => {
             throw new Error('No se pudo acceder al archivo en la nube');
         }
 
-        // 4. Transmitir el archivo directamente al navegador del usuario
-        res.setHeader('Content-Disposition', `attachment; filename="archivo_descargado"`);
-        res.setHeader('Content-Type', respuesta.headers.get('Content-Type') || 'application/pdf');
+        // ✅ CAMBIO: Leer el nombre original de la base de datos
+        // Consultamos el nombre del archivo según el ID
+        const consultaNombre = await pool.query(`
+            SELECT nombre_archivo FROM documentos WHERE url_cloudinary = $1
+            UNION ALL
+            SELECT nombre_archivo FROM documentos_pasivos WHERE url_cloudinary = $1
+            UNION ALL
+            SELECT nombre_archivo FROM acta_epps WHERE url_cloudinary = $1
+            UNION ALL
+            SELECT nombre_archivo FROM certifi_competencia WHERE url_cloudinary = $1
+            UNION ALL
+            SELECT nombre_archivo FROM docus_medicos WHERE url_cloudinary = $1
+            UNION ALL
+            SELECT nombre_archivo FROM certificados_aptitud WHERE url_cloudinary = $1
+        `, [req.params.id]);
+
+        const nombreArchivo = consultaNombre.rows[0]?.nombre_archivo || 'documento.pdf';
+
+        // ✅ CAMBIO: Forzar nombre y tipo PDF
+        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(nombreArchivo)}"`);
+        res.setHeader('Content-Type', 'application/pdf');
         
         // Enviar el flujo de datos
         respuesta.body.pipe(res);
