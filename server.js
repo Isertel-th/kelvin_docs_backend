@@ -403,18 +403,23 @@ app.post('/api/admin/subir-a-usuario', verificarToken, permisoAdminDoc, upload.s
     
     const { tipo_documento, subtipo_documento, usuario_id, nombre_user, es_pasivo, nombre_archivo, fecha_documento, periodo } = req.body;
 
-    let tabla;
-    if (tipo_documento === "Certificado de Competencia") {
-        tabla = 'certifi_competencia';
-    } else if (tipo_documento === "Acta de EPP's") {
-        tabla = 'acta_epps';
-    } else if (tipo_documento === "Certificados Médicos") {
-        tabla = 'docus_medicos';
-    } else if (tipo_documento === "Certificados de Aptitud") {
-        tabla = 'certificados_aptitud';
-    } else {
-        tabla = es_pasivo === 'true' ? 'documentos_pasivos' : 'documentos';
-    }
+let tabla;
+if (tipo_documento === "Certificado de Competencia") {
+    tabla = 'certifi_competencia';
+} else if (tipo_documento === "Acta de EPP's") {
+    tabla = 'acta_epps';
+} else if (tipo_documento === "Certificados Médicos") {
+    tabla = 'docus_medicos';
+} else if (tipo_documento === "Certificados de Aptitud") {
+    tabla = 'certificados_aptitud';
+} 
+// ✅ DESVINCULACIÓN AHORA VA A LA TABLA GENERAL, SIN IMPORTAR SI ES ACTIVO O PASIVO
+else if (tipo_documento === "Desvinculación") {
+    tabla = 'documentos'; 
+} 
+else {
+    tabla = es_pasivo === 'true' ? 'documentos_pasivos' : 'documentos';
+}
 
     const estadoUsuario = es_pasivo === 'true' ? 'Pasivo' : 'Active'; // Mapeo dinámico para la nueva columna
 
@@ -462,14 +467,12 @@ app.get('/api/admin/documentos/:id', verificarToken, async (req, res) => {
 
         // 🟢 LÓGICA DE PERMISOS MEJORADA
         if (rolUsuario === 'Talento Humano' || rolUsuario === 'Administrador') {
-            // Ve todo
+            // Ve todo, incluyendo Desvinculación
         } 
         else if (rolUsuario === 'doc') {
-            // Solo documentos médicos
             condiciones.push(`d.tipo_documento IN ('Certificados Médicos', 'Certificados de Aptitud')`);
         } 
         else if (rolUsuario === 'kelvin') {
-            // Solo documentos técnicos
             condiciones.push(`d.tipo_documento IN ('Certificado de Competencia', 'Acta de EPP''s')`);
         } 
         else {
