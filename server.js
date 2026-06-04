@@ -373,11 +373,15 @@ app.post('/api/admin/mover-a-pasivo/:id', verificarToken, async (req, res) => {
         await client.query('UPDATE acta_epps SET usuario_id = $1, estado = $2 WHERE usuario_id = $3', [nuevoId, 'Pasivo', u.id]);
         await client.query('UPDATE certifi_competencia SET usuario_id = $1, estado = $2 WHERE usuario_id = $3', [nuevoId, 'Pasivo', u.id]);
         
-        await client.query(
-            `INSERT INTO documentos_pasivos (usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo) 
-             SELECT $1, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo FROM documentos WHERE usuario_id = $2`,
-            [nuevoId, u.id]
-        );
+await client.query(
+    `INSERT INTO documentos_pasivos (usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo) 
+     SELECT $1, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo 
+     FROM documentos 
+     WHERE usuario_id = $2 
+       AND tipo_documento != 'Desvinculación' -- ✅ NO COPIAR DESVINCULACIÓN
+`,
+    [nuevoId, u.id]
+);  
 
         await client.query('UPDATE docus_medicos SET usuario_id = $1 WHERE usuario_id = $2', [nuevoId, u.id]);
         await client.query('UPDATE certificados_aptitud SET usuario_id = $1 WHERE usuario_id = $2', [nuevoId, u.id]);
@@ -412,7 +416,12 @@ app.post('/api/admin/subir-a-usuario', verificarToken, permisoAdminDoc, upload.s
         tabla = 'docus_medicos';
     } else if (tipo_documento === "Certificados de Aptitud") {
         tabla = 'certificados_aptitud';
-    } else {
+    } 
+    // ✅ DESVINCULACIÓN SIEMPRE VA A LA TABLA GENERAL, NO IMPORTA SI ES ACTIVO O PASIVO
+    else if (tipo_documento === "Desvinculación") {
+        tabla = 'documentos'; 
+    } 
+    else {
         tabla = es_pasivo === 'true' ? 'documentos_pasivos' : 'documentos';
     }
 
