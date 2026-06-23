@@ -294,10 +294,19 @@ app.post('/api/admin/crear-usuario', verificarToken, upload.single('foto'), asyn
     try {
         const foto_url = await subirAOneDrive(req.file.buffer, req.file.originalname, 'Fotos_Perfil');
 
+        // ✅ Formateo: Nombre en mayúsculas, sin caracteres especiales (excepto ñ)
+        const nombreLimpio = nombre_completo
+        .toUpperCase()
+        .replace(/[^A-ZÑ\s]/g, '');
+
+        // ✅ Formateo: Dirección en mayúsculas, admite ñ, #, -, /, ., etc.
+        const direccionLimpia = direccion
+        .toUpperCase()
+        .trim();
+
         await pool.query(
             'INSERT INTO nomina (username, cedula, nombre_completo, rol, fecha_ingreso, correo, celular, direccion, foto_url) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
-            // ✅ Ahora sí existe la variable 'direccion' y se guarda correctamente
-            [usuarioLogin, cedula, nombre_completo, 'user', fecha_ingreso || null, correo, celular, direccion, foto_url]
+            [usuarioLogin, cedula, nombreLimpio, 'user', fecha_ingreso || null, correo, celular, direccionLimpia, foto_url]
         );
         res.json({ message: 'Ok' });
     } catch (err) { 
@@ -336,13 +345,22 @@ app.put('/api/admin/modificar-usuario/:tabla/:id', verificarToken, upload.single
             fotoFinal = await subirAOneDrive(req.file.buffer, req.file.originalname, 'Fotos_Perfil');
         }
 
+        // ✅ Formateo: Nombre en mayúsculas, sin caracteres especiales (excepto ñ)
+        const nombreLimpio = nombre_completo
+        .toUpperCase()
+        .replace(/[^A-ZÑ\s]/g, '');
+
+        // ✅ Formateo: Dirección en mayúsculas, admite ñ y símbolos habituales
+        const direccionLimpia = direccion
+        .toUpperCase()
+        .trim();
+
         await pool.query(
             `UPDATE ${tabla} 
-             SET username = $1, cedula = $2, nombre_completo = $3, fecha_ingreso = $4, correo = $5, celular = $6, direccion = $7, foto_url = $8 
-             WHERE id = $9`,
-            [cedula, cedula, nombre_completo, fecha_ingreso || null, correo, celular, direccion, fotoFinal, id]
+            SET username = $1, cedula = $2, nombre_completo = $3, fecha_ingreso = $4, correo = $5, celular = $6, direccion = $7, foto_url = $8 
+            WHERE id = $9`,
+            [cedula, cedula, nombreLimpio, fecha_ingreso || null, correo, celular, direccionLimpia, fotoFinal, id]
         );
-
         res.json({ message: 'Ok' });
     } catch (err) {
         console.error(err);
