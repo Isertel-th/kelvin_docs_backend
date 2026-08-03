@@ -280,96 +280,154 @@ app.get('/api/admin/pasivos', verificarToken, permisoAdminDoc, async (req, res) 
 });
 
 app.post('/api/admin/crear-usuario', verificarToken, upload.single('foto'), async (req, res) => {
-    if (req.user.rol !== 'Talento Humano') return res.status(403).json({ error: 'Solo el personal de Talento Humano crea usuarios' });
-    
-    // ✅ AGREGA ESTA LÍNEA: Aquí le decimos al servidor que reciba el valor de dirección
-    const { cedula, nombre_completo, fecha_ingreso, correo, celular, username, direccion } = req.body; 
+    // Verificación de rol
+    if (req.user.rol !== 'Talento Humano') {
+        return res.status(403).json({ error: 'Solo el personal de Talento Humano crea usuarios' });
+    }
 
-    if(!cedula || cedula.length !== 10) return res.status(400).json({ error: 'Cédula debe tener 10 dígitos' });
-    if(!correo || !esCorreoValido(correo)) return res.status(400).json({ error: 'Correo inválido o dominio no permitido' });
-    if(!nombre_completo || !req.file) return res.status(400).json({ error: 'Faltan campos obligatorios o la foto' });
+    // Extraemos todos los campos incluyendo dirección
+    const { cedula, nombre_completo, fecha_ingreso, correo, celular, username, direccion, rol } = req.body;
 
+    // Validaciones mejoradas
+    if (!cedula || cedula.length !== 10) {
+        return res.status(400).json({ error: 'Cédula debe tener 10 dígitos' });
+    }
+    if (!correo || !esCorreoValido(correo)) {
+        return res.status(400).json({ error: 'Correo inválido o dominio no permitido' });
+    }
+    if (!nombre_completo || !req.file) {
+        return res.status(400).json({ error: 'Faltan campos obligatorios o la foto' });
+    }
+
+    // Valor por defecto para username
     const usuarioLogin = username || cedula;
 
     try {
+        // Subida de imagen
         const foto_url = await subirAOneDrive(req.file.buffer, req.file.originalname, 'Fotos_Perfil');
 
-        // ✅ Formateo: Nombre en mayúsculas, sin caracteres especiales (excepto ñ)
+        // ✅ Limpieza y formateo del nombre (solo letras, ñ y espacios)
         const nombreLimpio = nombre_completo
-        .toUpperCase()
-        .replace(/[^A-ZÑ\s]/g, '');
+            .toUpperCase()
+            .trim()
+            .replace(/[^A-ZÑÁÉÍÓÚ\s]/g, ''); // Acepta vocales con tilde también
 
-        // ✅ Formateo: Dirección en mayúsculas, admite ñ, #, -, /, ., etc.
-        const direccionLimpia = direccion
-        .toUpperCase()
-        .trim();
+        // ✅ Limpieza y formateo de dirección (admite caracteres usados en direcciones)
+        const direccionLimpia = (direccion || '')
+            .toUpperCase()
+            .trim()
+            .replace(/[^A-ZÑÁÉÍÓÚ0-9\s#\-\/\.,]/g, ''); // Permite números y símbolos comunes
 
+        // ✅ Rol: si viene del cuerpo usarlo, si no por defecto 'user'
+        const rolAsignar = rol || 'user';
+
+        // Inserción en base de datos
         await pool.query(
-            'INSERT INTO nomina (username, cedula, nombre_completo, rol, fecha_ingreso, correo, celular, direccion, foto_url) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
-            [usuarioLogin, cedula, nombreLimpio, 'user', fecha_ingreso || null, correo, celular, direccionLimpia, foto_url]
+            `INSERT INTO nomina 
+            (username, cedula, nombre_completo, rol, fecha_ingreso, correo, celular, direccion, foto_url) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+            [usuarioLogin, cedula, nombreLimpio, rolAsignar, fecha_ingreso || null, correo, celular || null, direccionLimpia || null, foto_url]
         );
-        res.json({ message: 'Ok' });
-    } catch (err) { 
-        console.error(err);
-        res.status(500).json({ error: "Error al guardar en Nómina. Verifique si la cédula o correo ya existen." }); 
+
+        res.json({ message: 'Usuario creado correctamente' });
+    } catch (err) {
+        console.error('Error al crear usuario:', err);
+        // Si es error de duplicado (cédula/correo)
+        if (err.code === '23505') { // Código PostgreSQL para duplicado
+            return res.status(400).json({ error: 'La cédula o el correo ya están registrados' });
+        }
+        res.status(500).json({ error: 'Error al guardar en Nómina. Intente nuevamente.' });
     }
 });
 
 app.put('/api/admin/modificar-usuario/:tabla/:id', verificarToken, upload.single('foto'), async (req, res) => {
-    // Reemplazado 'admin' por 'Talento Humano'
-    if (req.user.rol !== 'Talento Humano') return res.status(403).json({ error: 'Solo el personal de Talento Humano puede modificar datos' });
-    
-    const { tabla, id } = req.params;
-    const { cedula, nombre_completo, fecha_ingreso, correo, celular, direccion } = req.body;
+    // Verificación de rol
+    if (req.user.rol !== 'Talento Humano') {
+        return res.status(403).json({ error: 'Solo el personal de Talento Humano puede modificar datos' });
+    }
 
+    const { tabla, id } = req.params;
+    const { cedula, nombre_completo, fecha_ingreso, correo, celular, direccion, username } = req.body;
+
+    // Validación de tabla (evita inyección SQL por nombre de tabla)
+    const tablasPermitidas = ['nomina'];
+    if (!tablasPermitidas.includes(tabla)) {
+        return res.status(400).json({ error: 'Tabla de destino no válida' });
+    }
     if (tabla === 'pasivos') {
         return res.status(403).json({ error: 'Los registros de personal pasivo son históricos y no se pueden modificar.' });
     }
 
-    if (tabla !== 'nomina') {
-        return res.status(400).json({ error: 'Tabla de destino no válida' });
+    // Validaciones de campos
+    if (!cedula || cedula.length !== 10) {
+        return res.status(400).json({ error: 'La cédula debe tener exactamente 10 dígitos' });
+    }
+    if (!correo || !esCorreoValido(correo)) {
+        return res.status(400).json({ error: 'Correo inválido o dominio institucional no permitido' });
+    }
+    if (!nombre_completo) {
+        return res.status(400).json({ error: 'El nombre completo es obligatorio' });
     }
 
-    if (!cedula || cedula.length !== 10) return res.status(400).json({ error: 'La cédula debe tener exactamente 10 dígitos' });
-    if (!correo || !esCorreoValido(correo)) return res.status(400).json({ error: 'Correo inválido o dominio institucional no permitido' });
-    if (!nombre_completo) return res.status(400).json({ error: 'El nombre completo es obligatorio' });
-
     try {
+        // Verificar que el usuario exista
         const existeUser = await pool.query(`SELECT foto_url FROM ${tabla} WHERE id = $1`, [id]);
         if (existeUser.rows.length === 0) {
             return res.status(404).json({ error: `El colaborador no existe en la tabla de ${tabla}.` });
         }
 
+        // Mantener foto anterior si no se sube una nueva
         let fotoFinal = existeUser.rows[0].foto_url;
         if (req.file) {
             fotoFinal = await subirAOneDrive(req.file.buffer, req.file.originalname, 'Fotos_Perfil');
         }
 
-        // ✅ Formateo: Nombre en mayúsculas, sin caracteres especiales (excepto ñ)
+        // ✅ Formateo consistente con el crear-usuario
         const nombreLimpio = nombre_completo
-        .toUpperCase()
-        .replace(/[^A-ZÑ\s]/g, '');
+            .toUpperCase()
+            .trim()
+            .replace(/[^A-ZÑÁÉÍÓÚ\s]/g, '');
 
-        // ✅ Formateo: Dirección en mayúsculas, admite ñ y símbolos habituales
-        const direccionLimpia = direccion
-        .toUpperCase()
-        .trim();
+        // ✅ Manejo seguro si dirección viene vacía + caracteres permitidos
+        const direccionLimpia = (direccion || '')
+            .toUpperCase()
+            .trim()
+            .replace(/[^A-ZÑÁÉÍÓÚ0-9\s#\-\/\.,]/g, '');
 
+        // Valor para username: si viene en el body se usa, si no la cédula
+        const usuarioLogin = username || cedula;
+
+        // ✅ Consulta corregida: ya no repite cédula en username
         await pool.query(
             `UPDATE ${tabla} 
-            SET username = $1, cedula = $2, nombre_completo = $3, fecha_ingreso = $4, correo = $5, celular = $6, direccion = $7, foto_url = $8 
+            SET username = $1, cedula = $2, nombre_completo = $3, fecha_ingreso = $4, 
+                correo = $5, celular = $6, direccion = $7, foto_url = $8 
             WHERE id = $9`,
-            [cedula, cedula, nombreLimpio, fecha_ingreso || null, correo, celular, direccionLimpia, fotoFinal, id]
+            [
+                usuarioLogin, 
+                cedula, 
+                nombreLimpio, 
+                fecha_ingreso || null, 
+                correo, 
+                celular || null, 
+                direccionLimpia || null, 
+                fotoFinal, 
+                id
+            ]
         );
-        res.json({ message: 'Ok' });
+
+        res.json({ message: 'Datos actualizados correctamente' });
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Error al actualizar los datos. Verifique que la cédula o correo no estén duplicados." });
+        console.error('Error al modificar usuario:', err);
+        // Manejo específico de duplicados PostgreSQL
+        if (err.code === '23505') {
+            return res.status(400).json({ error: 'La cédula o el correo ya están registrados en otro colaborador' });
+        }
+        res.status(500).json({ error: 'Error al actualizar los datos. Intente nuevamente.' });
     }
 });
 
 app.post('/api/admin/mover-a-pasivo/:id', verificarToken, async (req, res) => {
-    // Reemplazado 'admin' por 'Talento Humano'
     if (req.user.rol !== 'Talento Humano') return res.status(403).json({ error: 'Acción restringida' });
     
     const client = await pool.connect();
@@ -380,12 +438,16 @@ app.post('/api/admin/mover-a-pasivo/:id', verificarToken, async (req, res) => {
         if (userRes.rows.length === 0) throw new Error("Empleado no encontrado en nómina");
         const u = userRes.rows[0];
         
+        // ✅ AGREGA AQUÍ: Validar que NO exista ya ese ID en pasivos
+        const existeId = await client.query('SELECT id FROM pasivos WHERE id = $1', [u.id]);
+        if (existeId.rows.length > 0) throw new Error(`El ID ${u.id} ya existe en personal pasivo. Corrige la base de datos primero.`);
+
         const insertPasivo = await client.query(
             `INSERT INTO pasivos (username, cedula, nombre_completo, rol, fecha_ingreso, correo, celular, direccion, foto_url) 
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
             [u.username, u.cedula, u.nombre_completo, u.rol, u.fecha_ingreso, u.correo, u.celular, u.direccion, u.foto_url]
         );
-        const nuevoId = insertPasivo.rows[0].id;
+        const nuevoId = insertPasivo.rows[0].id; // ✅ Debe ser un ID NUEVO, nunca igual al anterior
 
         // --- ACTUALIZACIÓN DE TABLAS UNIFICADAS ---
         await client.query('UPDATE acta_epps SET usuario_id = $1, estado = $2 WHERE usuario_id = $3', [nuevoId, 'Pasivo', u.id]);
@@ -421,6 +483,14 @@ app.post('/api/admin/subir-a-usuario', verificarToken, permisoAdminDoc, upload.s
     
     const { tipo_documento, subtipo_documento, usuario_id, nombre_user, es_pasivo, nombre_archivo, fecha_documento, periodo } = req.body;
 
+        // ✅ AGREGA ESTA VALIDACIÓN OBLIGATORIA:
+    const existeActivo = await pool.query('SELECT id FROM nomina WHERE id = $1', [usuario_id]);
+    const existePasivo = await pool.query('SELECT id FROM pasivos WHERE id = $1', [usuario_id]);
+    if ( (es_pasivo === 'true' && existePasivo.rows.length === 0) || (es_pasivo !== 'true' && existeActivo.rows.length === 0) ) {
+        return res.status(400).json({ error: "El colaborador no existe o su estado (activo/pasivo) no coincide." });
+    }
+
+    
 let tabla;
 if (tipo_documento === "Certificado de Competencia") {
     tabla = 'certifi_competencia';
