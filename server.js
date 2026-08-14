@@ -438,35 +438,45 @@ app.post('/api/admin/mover-a-pasivo/:id', verificarToken, async (req, res) => {
         if (userRes.rows.length === 0) throw new Error("Empleado no encontrado en nómina");
         const u = userRes.rows[0];
         
-        // ✅ AGREGA AQUÍ: Validar que NO exista ya ese ID en pasivos
-        const existeId = await client.query('SELECT id FROM pasivos WHERE id = $1', [u.id]);
-        if (existeId.rows.length > 0) throw new Error(`El ID ${u.id} ya existe en personal pasivo. Corrige la base de datos primero.`);
+        // ✅ --- GENERAR ID ALEATORIO ÚNICO PARA PASIVOS ---
+        // Rango: desde 1.000.000 hasta 9.999.999 → NUNCA choca con nómina
+        let nuevoIdPasivo;
+        let existe = true;
+        while (existe) {
+            nuevoIdPasivo = Math.floor(1_000_000 + Math.random() * 9_000_000);
+            // Verificar que NO exista ya en pasivos
+            const resExistente = await client.query('SELECT id FROM pasivos WHERE id = $1', [nuevoIdPasivo]);
+            existe = resExistente.rows.length > 0;
+        }
+        // ✅ nuevoIdPasivo ya es único y ≥ 1.000.000
+        // --- FIN GENERACIÓN ---
 
+        // ✅ Usamos el ID aleatorio en lugar del que tenía en nómina
         const insertPasivo = await client.query(
-            `INSERT INTO pasivos (username, cedula, nombre_completo, rol, fecha_ingreso, correo, celular, direccion, foto_url) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
-            [u.username, u.cedula, u.nombre_completo, u.rol, u.fecha_ingreso, u.correo, u.celular, u.direccion, u.foto_url]
+            `INSERT INTO pasivos (id, username, cedula, nombre_completo, rol, fecha_ingreso, correo, celular, direccion, foto_url) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+            [nuevoIdPasivo, u.username, u.cedula, u.nombre_completo, u.rol, u.fecha_ingreso, u.correo, u.celular, u.direccion, u.foto_url]
         );
-        const nuevoId = insertPasivo.rows[0].id; // ✅ Debe ser un ID NUEVO, nunca igual al anterior
+        const idFinal = insertPasivo.rows[0].id;
 
         // --- ACTUALIZACIÓN DE TABLAS UNIFICADAS ---
-        await client.query('UPDATE acta_epps SET usuario_id = $1, estado = $2 WHERE usuario_id = $3', [nuevoId, 'Pasivo', u.id]);
-        await client.query('UPDATE certifi_competencia SET usuario_id = $1, estado = $2 WHERE usuario_id = $3', [nuevoId, 'Pasivo', u.id]);
+        await client.query('UPDATE acta_epps SET usuario_id = $1, estado = $2 WHERE usuario_id = $3', [idFinal, 'Pasivo', u.id]);
+        await client.query('UPDATE certifi_competencia SET usuario_id = $1, estado = $2 WHERE usuario_id = $3', [idFinal, 'Pasivo', u.id]);
         
         await client.query(
             `INSERT INTO documentos_pasivos (usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo) 
              SELECT $1, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo FROM documentos WHERE usuario_id = $2`,
-            [nuevoId, u.id]
+            [idFinal, u.id]
         );
 
-        await client.query('UPDATE docus_medicos SET usuario_id = $1 WHERE usuario_id = $2', [nuevoId, u.id]);
-        await client.query('UPDATE certificados_aptitud SET usuario_id = $1 WHERE usuario_id = $2', [nuevoId, u.id]);
+        await client.query('UPDATE docus_medicos SET usuario_id = $1 WHERE usuario_id = $2', [idFinal, u.id]);
+        await client.query('UPDATE certificados_aptitud SET usuario_id = $1 WHERE usuario_id = $2', [idFinal, u.id]);
 
         await client.query('DELETE FROM documentos WHERE usuario_id = $1', [u.id]);
         await client.query('DELETE FROM nomina WHERE id = $1', [u.id]);
 
         await client.query('COMMIT');
-        res.json({ message: 'Ok' });
+        res.json({ message: 'Ok', nuevo_id: idFinal });
     } catch (err) {
         await client.query('ROLLBACK');
         console.error(err);
