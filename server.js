@@ -1231,43 +1231,111 @@ app.get('/api/usuario/mis-documentos/:id', verificarToken, async (req, res) => {
         // ==============================================
         const consultaFinal = `
             SELECT * FROM (
-                -- Tabla principal
-                SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
-                FROM documentos 
+
+                SELECT
+                    id,
+                    usuario_id,
+                    tipo_documento,
+                    subtipo_documento,
+                    url_cloudinary,
+                    nombre_user,
+                    nombre_archivo,
+                    fecha_documento,
+                    periodo,
+                    created_at,
+                    'documentos' AS origen
+                FROM documentos
                 WHERE usuario_id = $1
 
                 UNION ALL
-                -- Tabla Actas de EPP's
-                SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
-                FROM acta_epps 
+
+                SELECT
+                    id,
+                    usuario_id,
+                    tipo_documento,
+                    subtipo_documento,
+                    url_cloudinary,
+                    nombre_user,
+                    nombre_archivo,
+                    fecha_documento,
+                    periodo,
+                    created_at,
+                    'acta_epps' AS origen
+                FROM acta_epps
                 WHERE usuario_id = $1
 
                 UNION ALL
-                -- Tabla Certificados Competencia
-                SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
-                FROM certifi_competencia 
+
+                SELECT
+                    id,
+                    usuario_id,
+                    tipo_documento,
+                    subtipo_documento,
+                    url_cloudinary,
+                    nombre_user,
+                    nombre_archivo,
+                    fecha_documento,
+                    periodo,
+                    created_at,
+                    'certifi_competencia' AS origen
+                FROM certifi_competencia
                 WHERE usuario_id = $1
 
                 UNION ALL
-                -- Tabla Documentos Médicos
-                SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
-                FROM docus_medicos 
+
+                SELECT
+                    id,
+                    usuario_id,
+                    tipo_documento,
+                    subtipo_documento,
+                    url_cloudinary,
+                    nombre_user,
+                    nombre_archivo,
+                    fecha_documento,
+                    periodo,
+                    created_at,
+                    'docus_medicos' AS origen
+                FROM docus_medicos
                 WHERE usuario_id = $1
 
                 UNION ALL
-                -- Tabla Certificados Aptitud
-                SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
-                FROM certificados_aptitud 
+
+                SELECT
+                    id,
+                    usuario_id,
+                    tipo_documento,
+                    subtipo_documento,
+                    url_cloudinary,
+                    nombre_user,
+                    nombre_archivo,
+                    fecha_documento,
+                    periodo,
+                    created_at,
+                    'certificados_aptitud' AS origen
+                FROM certificados_aptitud
                 WHERE usuario_id = $1
 
                 UNION ALL
-                -- Tabla Documentos Pasivos
-                SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at 
-                FROM documentos_pasivos 
+
+                SELECT
+                    id,
+                    usuario_id,
+                    tipo_documento,
+                    subtipo_documento,
+                    url_cloudinary,
+                    nombre_user,
+                    nombre_archivo,
+                    fecha_documento,
+                    periodo,
+                    created_at,
+                    'documentos_pasivos' AS origen
+                FROM documentos_pasivos
                 WHERE usuario_id = $1
+
             ) AS todos_los_docs
-            -- 👇 FILTRO POR PERMISOS ASIGNADOS
+
             WHERE 1=1 ${condicionTipo}
+
             ORDER BY fecha_documento DESC, created_at DESC
         `;
 
@@ -1337,6 +1405,117 @@ app.get('/api/descargar/:id', async (req, res) => {
         res.status(404).send("Archivo no encontrado o enlace caducado");
     }
 });
+
+
+const consultaFinal = `
+    SELECT * FROM (
+
+        SELECT
+            id,
+            usuario_id,
+            tipo_documento,
+            subtipo_documento,
+            url_cloudinary,
+            nombre_user,
+            nombre_archivo,
+            fecha_documento,
+            periodo,
+            created_at,
+            'documentos' AS origen
+        FROM documentos
+        WHERE usuario_id = $1
+
+        UNION ALL
+
+        SELECT
+            id,
+            usuario_id,
+            tipo_documento,
+            subtipo_documento,
+            url_cloudinary,
+            nombre_user,
+            nombre_archivo,
+            fecha_documento,
+            periodo,
+            created_at,
+            'acta_epps' AS origen
+        FROM acta_epps
+        WHERE usuario_id = $1
+
+        UNION ALL
+
+        SELECT
+            id,
+            usuario_id,
+            tipo_documento,
+            subtipo_documento,
+            url_cloudinary,
+            nombre_user,
+            nombre_archivo,
+            fecha_documento,
+            periodo,
+            created_at,
+            'certifi_competencia' AS origen
+        FROM certifi_competencia
+        WHERE usuario_id = $1
+
+        UNION ALL
+
+        SELECT
+            id,
+            usuario_id,
+            tipo_documento,
+            subtipo_documento,
+            url_cloudinary,
+            nombre_user,
+            nombre_archivo,
+            fecha_documento,
+            periodo,
+            created_at,
+            'docus_medicos' AS origen
+        FROM docus_medicos
+        WHERE usuario_id = $1
+
+        UNION ALL
+
+        SELECT
+            id,
+            usuario_id,
+            tipo_documento,
+            subtipo_documento,
+            url_cloudinary,
+            nombre_user,
+            nombre_archivo,
+            fecha_documento,
+            periodo,
+            created_at,
+            'certificados_aptitud' AS origen
+        FROM certificados_aptitud
+        WHERE usuario_id = $1
+
+        UNION ALL
+
+        SELECT
+            id,
+            usuario_id,
+            tipo_documento,
+            subtipo_documento,
+            url_cloudinary,
+            nombre_user,
+            nombre_archivo,
+            fecha_documento,
+            periodo,
+            created_at,
+            'documentos_pasivos' AS origen
+        FROM documentos_pasivos
+        WHERE usuario_id = $1
+
+    ) AS todos_los_docs
+
+    WHERE 1=1 ${condicionTipo}
+
+    ORDER BY fecha_documento DESC, created_at DESC
+`;
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
