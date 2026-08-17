@@ -1229,7 +1229,7 @@ app.get('/api/usuario/mis-documentos/:id', verificarToken, async (req, res) => {
         // 📃 CONSULTA: LEE Y UNE TODAS LAS TABLAS EXISTENTES
         // ✅ CORRECCIÓN: ELIMINADA LA SEGUNDA LLAMADA A docus_medicos QUE CAUSABA DUPLICADOS
         // ==============================================
-        const consultaFinal = `
+            const consultaFinal = `
             SELECT * FROM (
 
                 SELECT
@@ -1336,7 +1336,9 @@ app.get('/api/usuario/mis-documentos/:id', verificarToken, async (req, res) => {
 
             WHERE 1=1 ${condicionTipo}
 
-            ORDER BY fecha_documento DESC, created_at DESC
+            ORDER BY
+                fecha_documento DESC,
+                created_at DESC
         `;
 
         const resultado = await pool.query(consultaFinal, valores);
@@ -1405,117 +1407,199 @@ app.get('/api/descargar/:id', async (req, res) => {
         res.status(404).send("Archivo no encontrado o enlace caducado");
     }
 });
+// ==========================================================
+// ELIMINACIÓN UNIFICADA DE DOCUMENTOS
+// ==========================================================
+
+app.delete(
+    '/api/documentos/:origen/:id',
+    verificarToken,
+    async (req, res) => {
+
+        const { origen, id } = req.params;
+
+        console.log("================================");
+        console.log("🗑️ NUEVA RUTA DELETE ACTIVADA");
+        console.log("Origen:", origen);
+        console.log("ID:", id);
+        console.log("Rol:", req.user.rol);
+        console.log("================================");
 
 
-const consultaFinal = `
-    SELECT * FROM (
+        // ================================================
+        // TABLAS PERMITIDAS
+        // ================================================
 
-        SELECT
-            id,
-            usuario_id,
-            tipo_documento,
-            subtipo_documento,
-            url_cloudinary,
-            nombre_user,
-            nombre_archivo,
-            fecha_documento,
-            periodo,
-            created_at,
-            'documentos' AS origen
-        FROM documentos
-        WHERE usuario_id = $1
+        const tablasPermitidas = [
+            'documentos',
+            'documentos_pasivos',
+            'docus_medicos',
+            'certificados_aptitud',
+            'certifi_competencia',
+            'acta_epps'
+        ];
 
-        UNION ALL
 
-        SELECT
-            id,
-            usuario_id,
-            tipo_documento,
-            subtipo_documento,
-            url_cloudinary,
-            nombre_user,
-            nombre_archivo,
-            fecha_documento,
-            periodo,
-            created_at,
-            'acta_epps' AS origen
-        FROM acta_epps
-        WHERE usuario_id = $1
+        if (!tablasPermitidas.includes(origen)) {
 
-        UNION ALL
+            return res.status(400).json({
+                error: 'Origen documental no válido.'
+            });
 
-        SELECT
-            id,
-            usuario_id,
-            tipo_documento,
-            subtipo_documento,
-            url_cloudinary,
-            nombre_user,
-            nombre_archivo,
-            fecha_documento,
-            periodo,
-            created_at,
-            'certifi_competencia' AS origen
-        FROM certifi_competencia
-        WHERE usuario_id = $1
+        }
 
-        UNION ALL
 
-        SELECT
-            id,
-            usuario_id,
-            tipo_documento,
-            subtipo_documento,
-            url_cloudinary,
-            nombre_user,
-            nombre_archivo,
-            fecha_documento,
-            periodo,
-            created_at,
-            'docus_medicos' AS origen
-        FROM docus_medicos
-        WHERE usuario_id = $1
+        try {
 
-        UNION ALL
+            // ============================================
+            // BUSCAR EL DOCUMENTO EN SU TABLA REAL
+            // ============================================
 
-        SELECT
-            id,
-            usuario_id,
-            tipo_documento,
-            subtipo_documento,
-            url_cloudinary,
-            nombre_user,
-            nombre_archivo,
-            fecha_documento,
-            periodo,
-            created_at,
-            'certificados_aptitud' AS origen
-        FROM certificados_aptitud
-        WHERE usuario_id = $1
+            const documentoResult = await pool.query(
+                `
+                SELECT
+                    id,
+                    usuario_id,
+                    tipo_documento,
+                    nombre_archivo
+                FROM ${origen}
+                WHERE id = $1
+                LIMIT 1
+                `,
+                [id]
+            );
 
-        UNION ALL
 
-        SELECT
-            id,
-            usuario_id,
-            tipo_documento,
-            subtipo_documento,
-            url_cloudinary,
-            nombre_user,
-            nombre_archivo,
-            fecha_documento,
-            periodo,
-            created_at,
-            'documentos_pasivos' AS origen
-        FROM documentos_pasivos
-        WHERE usuario_id = $1
+            if (documentoResult.rows.length === 0) {
 
-    ) AS todos_los_docs
+                return res.status(404).json({
+                    error:
+                        `El documento ID ${id} no existe en ${origen}.`
+                });
 
-    WHERE 1=1 ${condicionTipo}
+            }
 
-    ORDER BY fecha_documento DESC, created_at DESC
-`;
+
+            const documento =
+                documentoResult.rows[0];
+
+
+            // ============================================
+            // VALIDACIÓN DE PERMISOS
+            // ============================================
+
+            const rol =
+                req.user.rol;
+
+
+            let autorizado = false;
+
+
+            // Talento Humano / Administrador
+            if (
+                rol === 'Talento Humano' ||
+                rol === 'Administrador'
+            ) {
+
+                autorizado = true;
+
+            }
+
+
+            // Médico
+            else if (
+                rol === 'doc' &&
+                [
+                    'Certificados Médicos',
+                    'Certificados de Aptitud'
+                ].includes(documento.tipo_documento)
+            ) {
+
+                autorizado = true;
+
+            }
+
+
+            // Kelvin
+            else if (
+                rol === 'kelvin' &&
+                [
+                    'Certificado de Competencia',
+                    "Acta de EPP's"
+                ].includes(documento.tipo_documento)
+            ) {
+
+                autorizado = true;
+
+            }
+
+
+            if (!autorizado) {
+
+                return res.status(403).json({
+                    error:
+                        'No tienes permisos para eliminar este documento.'
+                });
+
+            }
+
+
+            // ============================================
+            // ELIMINAR ÚNICAMENTE DE LA TABLA REAL
+            // ============================================
+
+            const resultado = await pool.query(
+                `
+                DELETE FROM ${origen}
+                WHERE id = $1
+                RETURNING id
+                `,
+                [id]
+            );
+
+
+            console.log(
+                `🗑️ DOCUMENTO ELIMINADO | ` +
+                `Tabla: ${origen} | ` +
+                `ID: ${id} | ` +
+                `Tipo: ${documento.tipo_documento}`
+            );
+
+
+            return res.json({
+
+                message:
+                    'Documento eliminado correctamente.',
+
+                id:
+                    resultado.rows[0].id,
+
+                origen:
+                    origen
+
+            });
+
+
+        } catch (err) {
+
+            console.error(
+                '❌ ERROR ELIMINANDO DOCUMENTO:',
+                err
+            );
+
+
+            return res.status(500).json({
+
+                error:
+                    'Error al eliminar documento: ' +
+                    err.message
+
+            });
+
+        }
+
+    }
+);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
