@@ -61,34 +61,129 @@ async function obtenerTokenValido() {
     console.log("🔑 Nuevo token OneDrive obtenido y guardado");
     return _cachedToken;
 }
-// ✅ FUNCIÓN COMPLETA Y CORREGIDA PARA SUBIR A ONEDRIVE
+// =============================================================
+// ✅ ONEDRIVE: RUTAS SEGURAS POR PERSONA / TIPO DE DOCUMENTO
+// =============================================================
+const ONEDRIVE_USER = 'talentohumano@isertel.net';
+
+function limpiarSegmentoOneDrive(valor = '') {
+    const limpio = String(valor)
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .replace(/[<>:"/\\|?*#%]/g, '_')
+        .replace(/\s+/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^[.\s_]+|[.\s_]+$/g, '')
+        .slice(0, 120);
+
+    return limpio || 'SIN_NOMBRE';
+}
+
+function codificarRutaGraph(ruta) {
+    return ruta.split('/').map(seg => encodeURIComponent(seg)).join('/');
+}
+
+async function asegurarCarpetasOneDrive(token, segmentos) {
+    let rutaPadre = '';
+
+    for (const segmentoOriginal of segmentos) {
+        const segmento = limpiarSegmentoOneDrive(segmentoOriginal);
+        const rutaActual = rutaPadre ? `${rutaPadre}/${segmento}` : segmento;
+        const rutaActualCodificada = codificarRutaGraph(rutaActual);
+
+        const comprobarUrl =
+            `https://graph.microsoft.com/v1.0/users/${ONEDRIVE_USER}/drive/root:/${rutaActualCodificada}`;
+
+        const comprobar = await fetch(comprobarUrl, {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+
+        if (comprobar.status === 404) {
+
+            const crearUrl = rutaPadre
+                ? `https://graph.microsoft.com/v1.0/users/${ONEDRIVE_USER}/drive/root:/${codificarRutaGraph(rutaPadre)}:/children`
+                : `https://graph.microsoft.com/v1.0/users/${ONEDRIVE_USER}/drive/root/children`;
+
+            const crear = await fetch(crearUrl, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    name: segmento,
+                    folder: {},
+                    '@microsoft.graph.conflictBehavior': 'fail'
+                })
+            });
+
+            if (!crear.ok && crear.status !== 409) {
+                const detalle = await crear.text();
+
+                throw new Error(
+                    `No se pudo crear la carpeta ${rutaActual}: ${crear.status} - ${detalle}`
+                );
+            }
+
+        } else if (!comprobar.ok) {
+
+            const detalle = await comprobar.text();
+
+            throw new Error(
+                `No se pudo verificar la carpeta ${rutaActual}: ${comprobar.status} - ${detalle}`
+            );
+        }
+
+        rutaPadre = rutaActual;
+    }
+
+    return rutaPadre;
+}
+
 async function subirAOneDrive(buffer, originalName, subFolder = '') {
-    console.log("🟡 [ONEDRIVE] INICIANDO SUBIDA - Archivo:", originalName, " | Carpeta:", subFolder);
+
+    console.log(
+        '🟡 [ONEDRIVE] INICIANDO SUBIDA - Archivo:',
+        originalName,
+        ' | Carpeta:',
+        subFolder
+    );
 
     try {
-        const token = await obtenerTokenValido();
-        console.log("🔵 [ONEDRIVE] Token válido obtenido correctamente"); 
 
-        const cleanOriginalName = originalName
-            .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-            .replace(/[^a-zA-Z0-9._-]/g, "_");
+        const token = await obtenerTokenValido();
+
+        const cleanOriginalName = String(originalName || 'archivo.pdf')
+            .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^a-zA-Z0-9._-]/g, '_');
 
         const fileName = `${Date.now()}_${cleanOriginalName}`;
-        
-        let rutaCompleta = 'Documentos_Isertel_Sistema/';
-        if (subFolder) {
-            const subFolderLimpio = subFolder
-                .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-                .replace(/[^a-zA-Z0-9._-]/g, "_");
-            rutaCompleta += `${subFolderLimpio}/`;
-        }
-        rutaCompleta += fileName;
 
-        const rutaCodificada = encodeURIComponent(rutaCompleta);
-        
-        const url = `https://graph.microsoft.com/v1.0/users/talentohumano@isertel.net/drive/root:/${rutaCodificada}:/content`;
+        const subCarpetas = Array.isArray(subFolder)
+            ? subFolder
+            : String(subFolder || '').split('/').filter(Boolean);
 
-        console.log("🔗 URL de subida:", url);
+        const carpetas = [
+            'Documentos_Isertel_Sistema',
+            ...subCarpetas
+        ].map(limpiarSegmentoOneDrive);
+
+        await asegurarCarpetasOneDrive(
+            token,
+            carpetas
+        );
+
+        const rutaCompleta = [
+            ...carpetas,
+            fileName
+        ].join('/');
+
+        const rutaCodificada =
+            codificarRutaGraph(rutaCompleta);
+
+        const url =
+            `https://graph.microsoft.com/v1.0/users/${ONEDRIVE_USER}/drive/root:/${rutaCodificada}:/content`;
 
         const res = await fetch(url, {
             method: 'PUT',
@@ -98,24 +193,106 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
             },
             body: buffer
         });
-        
-        console.log("🟡 [ONEDRIVE] Respuesta de Microsoft - Estado:", res.status);
 
         if (!res.ok) {
+
             const errText = await res.text();
-            console.error("🔴 [ONEDRIVE] ERROR MICROSOFT:", res.status, " | Detalle:", errText);
-            throw new Error(`Error OneDrive: ${res.status} - ${errText}`);
+
+            throw new Error(
+                `Error OneDrive: ${res.status} - ${errText}`
+            );
         }
 
         const driveItem = await res.json();
-        const archivoId = driveItem.id; 
-        
-        return archivoId; // 👈 CAMBIO CRÍTICO
+
+        return driveItem.id;
 
     } catch (err) {
-        console.error("🔴 [ONEDRIVE] ERROR TOTAL EN SUBIDA:", err.message);
+
+        console.error(
+            '🔴 [ONEDRIVE] ERROR TOTAL EN SUBIDA:',
+            err.message
+        );
+
         throw err;
     }
+}
+
+
+// =============================================================
+// ✅ IDENTIDAD PERMANENTE DEL EXPEDIENTE: CÉDULA
+// =============================================================
+
+async function obtenerPersonaDestino(usuarioId, esPasivoRaw) {
+
+    const esPasivo =
+        String(esPasivoRaw).toLowerCase() === 'true';
+
+    const tablaPersona =
+        esPasivo ? 'pasivos' : 'nomina';
+
+    const result = await pool.query(
+        `SELECT
+            id,
+            cedula,
+            nombre_completo
+         FROM ${tablaPersona}
+         WHERE id = $1`,
+        [usuarioId]
+    );
+
+    if (result.rows.length === 0) {
+
+        const error = new Error(
+            'El colaborador no existe o su estado activo/pasivo ya cambió. Recargue la pantalla e inténtelo nuevamente.'
+        );
+
+        error.status = 400;
+
+        throw error;
+    }
+
+    return {
+        ...result.rows[0],
+        esPasivo,
+        tablaPersona
+    };
+}
+
+
+function resolverTablaDocumento(tipoDocumento, esPasivo) {
+
+    if (tipoDocumento === 'Certificado de Competencia') {
+        return 'certifi_competencia';
+    }
+
+    if (tipoDocumento === "Acta de EPP's") {
+        return 'acta_epps';
+    }
+
+    if (tipoDocumento === 'Certificados Médicos') {
+        return 'docus_medicos';
+    }
+
+    if (tipoDocumento === 'Certificados de Aptitud') {
+        return 'certificados_aptitud';
+    }
+
+    return esPasivo
+        ? 'documentos_pasivos'
+        : 'documentos';
+}
+
+
+function rutaExpedientePersona(persona, tipoDocumento) {
+
+    return [
+        'Expedientes_Personal',
+
+        `${persona.nombre_completo}__CI_${persona.cedula}`,
+
+        tipoDocumento
+    ];
 }
 
 // ✅ ==== AÑADE ESTA FUNCIÓN NUEVA, ES PARA LEER / LISTAR ====
@@ -244,24 +421,17 @@ app.post('/api/login', async (req, res) => {
 
 
 // RESPALDO ASEGURADO: Solo elimina el registro de PostgreSQL
-app.delete('/api/admin/documentos/:id', verificarToken, async (req, res) => {
-    // Reemplazado 'admin' por 'Talento Humano'
-    if (req.user.rol !== 'Talento Humano') return res.status(403).json({ error: 'Acción restringida' });
-    
-    const { id } = req.params;
-    try {
-        const resActivo = await pool.query("DELETE FROM documentos WHERE id = $1", [id]);
-        const resPasivo = await pool.query("DELETE FROM documentos_pasivos WHERE id = $1", [id]);
-        
-        if (resActivo.rowCount > 0 || resPasivo.rowCount > 0) {
-            return res.json({ message: 'Ok' });
-        } else {
-            return res.status(404).json({ error: 'Documento administrativo no encontrado' });
-        }
-    } catch (err) {
-        res.status(500).json({ error: "Error en la base de datos al eliminar: " + err.message });
+app.delete(
+    '/api/admin/documentos/:id',
+    verificarToken,
+    async (req, res) => {
+
+        return res.status(410).json({
+            error:
+                'Ruta antigua deshabilitada por seguridad. Use /api/documentos/:origen/:id.'
+        });
     }
-});
+);
 
 // ✅ Ruta para ver Nómina (Todos pueden entrar ahora)
 app.get('/api/admin/empleados', verificarToken, permisoAdminDoc, async (req, res) => {
@@ -428,195 +598,583 @@ app.put('/api/admin/modificar-usuario/:tabla/:id', verificarToken, upload.single
 });
 
 app.post('/api/admin/mover-a-pasivo/:id', verificarToken, async (req, res) => {
-    if (req.user.rol !== 'Talento Humano') return res.status(403).json({ error: 'Acción restringida' });
-    
+
+    if (req.user.rol !== 'Talento Humano') {
+        return res.status(403).json({
+            error: 'Acción restringida'
+        });
+    }
+
     const client = await pool.connect();
+
     try {
+
         await client.query('BEGIN');
 
-        const userRes = await client.query('SELECT * FROM nomina WHERE id = $1', [req.params.id]);
-        if (userRes.rows.length === 0) throw new Error("Empleado no encontrado en nómina");
+        const userRes = await client.query(
+            'SELECT * FROM nomina WHERE id = $1',
+            [req.params.id]
+        );
+
+        if (userRes.rows.length === 0) {
+            throw new Error(
+                'Empleado no encontrado en nómina'
+            );
+        }
+
         const u = userRes.rows[0];
-        
-        // ✅ --- GENERAR ID ALEATORIO ÚNICO PARA PASIVOS ---
-        // Rango: desde 1.000.000 hasta 9.999.999 → NUNCA choca con nómina
+
         let nuevoIdPasivo;
         let existe = true;
+
         while (existe) {
-            nuevoIdPasivo = Math.floor(1_000_000 + Math.random() * 9_000_000);
-            // Verificar que NO exista ya en pasivos
-            const resExistente = await client.query('SELECT id FROM pasivos WHERE id = $1', [nuevoIdPasivo]);
-            existe = resExistente.rows.length > 0;
+
+            nuevoIdPasivo =
+                Math.floor(
+                    1_000_000 +
+                    Math.random() * 9_000_000
+                );
+
+            const resExistente =
+                await client.query(
+                    `
+                    SELECT id
+                    FROM pasivos
+                    WHERE id = $1
+
+                    UNION ALL
+
+                    SELECT id
+                    FROM nomina
+                    WHERE id = $1
+                    `,
+                    [nuevoIdPasivo]
+                );
+
+            existe =
+                resExistente.rows.length > 0;
         }
-        // ✅ nuevoIdPasivo ya es único y ≥ 1.000.000
-        // --- FIN GENERACIÓN ---
 
-        // ✅ Usamos el ID aleatorio en lugar del que tenía en nómina
-        const insertPasivo = await client.query(
-            `INSERT INTO pasivos (id, username, cedula, nombre_completo, rol, fecha_ingreso, correo, celular, direccion, foto_url) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
-            [nuevoIdPasivo, u.username, u.cedula, u.nombre_completo, u.rol, u.fecha_ingreso, u.correo, u.celular, u.direccion, u.foto_url]
-        );
-        const idFinal = insertPasivo.rows[0].id;
+        const insertPasivo =
+            await client.query(
+                `
+                INSERT INTO pasivos (
+                    id,
+                    username,
+                    cedula,
+                    nombre_completo,
+                    rol,
+                    fecha_ingreso,
+                    correo,
+                    celular,
+                    direccion,
+                    foto_url
+                )
+                VALUES (
+                    $1,$2,$3,$4,$5,
+                    $6,$7,$8,$9,$10
+                )
+                RETURNING id
+                `,
+                [
+                    nuevoIdPasivo,
+                    u.username,
+                    u.cedula,
+                    u.nombre_completo,
+                    u.rol,
+                    u.fecha_ingreso,
+                    u.correo,
+                    u.celular,
+                    u.direccion,
+                    u.foto_url
+                ]
+            );
 
-        // --- ACTUALIZACIÓN DE TABLAS UNIFICADAS ---
-        await client.query('UPDATE acta_epps SET usuario_id = $1, estado = $2 WHERE usuario_id = $3', [idFinal, 'Pasivo', u.id]);
-        await client.query('UPDATE certifi_competencia SET usuario_id = $1, estado = $2 WHERE usuario_id = $3', [idFinal, 'Pasivo', u.id]);
-        
+        const idFinal =
+            insertPasivo.rows[0].id;
+
+
+        // ==========================================
+        // DOCUMENTOS TÉCNICOS
+        // ==========================================
+
         await client.query(
-            `INSERT INTO documentos_pasivos (usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo) 
-             SELECT $1, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo FROM documentos WHERE usuario_id = $2`,
-            [idFinal, u.id]
+            `
+            UPDATE acta_epps
+            SET
+                usuario_id = $1,
+                estado = $2
+            WHERE
+                usuario_id = $3
+                AND persona_cedula = $4
+            `,
+            [
+                idFinal,
+                'Pasivo',
+                u.id,
+                u.cedula
+            ]
         );
 
-        await client.query('UPDATE docus_medicos SET usuario_id = $1 WHERE usuario_id = $2', [idFinal, u.id]);
-        await client.query('UPDATE certificados_aptitud SET usuario_id = $1 WHERE usuario_id = $2', [idFinal, u.id]);
+        await client.query(
+            `
+            UPDATE certifi_competencia
+            SET
+                usuario_id = $1,
+                estado = $2
+            WHERE
+                usuario_id = $3
+                AND persona_cedula = $4
+            `,
+            [
+                idFinal,
+                'Pasivo',
+                u.id,
+                u.cedula
+            ]
+        );
 
-        await client.query('DELETE FROM documentos WHERE usuario_id = $1', [u.id]);
-        await client.query('DELETE FROM nomina WHERE id = $1', [u.id]);
+
+        // ==========================================
+        // DOCUMENTOS GENERALES
+        // ==========================================
+
+        await client.query(
+            `
+            INSERT INTO documentos_pasivos (
+                usuario_id,
+                persona_cedula,
+                tipo_documento,
+                subtipo_documento,
+                url_cloudinary,
+                nombre_user,
+                nombre_archivo,
+                fecha_documento,
+                periodo
+            )
+
+            SELECT
+                $1,
+                persona_cedula,
+                tipo_documento,
+                subtipo_documento,
+                url_cloudinary,
+                nombre_user,
+                nombre_archivo,
+                fecha_documento,
+                periodo
+
+            FROM documentos
+
+            WHERE
+                usuario_id = $2
+                AND persona_cedula = $3
+            `,
+            [
+                idFinal,
+                u.id,
+                u.cedula
+            ]
+        );
+
+
+        // ==========================================
+        // DOCUMENTOS MÉDICOS
+        // ==========================================
+
+        await client.query(
+            `
+            UPDATE docus_medicos
+            SET usuario_id = $1
+            WHERE
+                usuario_id = $2
+                AND persona_cedula = $3
+            `,
+            [
+                idFinal,
+                u.id,
+                u.cedula
+            ]
+        );
+
+        await client.query(
+            `
+            UPDATE certificados_aptitud
+            SET usuario_id = $1
+            WHERE
+                usuario_id = $2
+                AND persona_cedula = $3
+            `,
+            [
+                idFinal,
+                u.id,
+                u.cedula
+            ]
+        );
+
+
+        // ==========================================
+        // ELIMINAR COPIA DE ACTIVOS
+        // ==========================================
+
+        await client.query(
+            `
+            DELETE FROM documentos
+            WHERE
+                usuario_id = $1
+                AND persona_cedula = $2
+            `,
+            [
+                u.id,
+                u.cedula
+            ]
+        );
+
+
+        await client.query(
+            `
+            DELETE FROM nomina
+            WHERE id = $1
+            `,
+            [u.id]
+        );
+
 
         await client.query('COMMIT');
-        res.json({ message: 'Ok', nuevo_id: idFinal });
+
+        res.json({
+            message: 'Ok',
+            nuevo_id: idFinal
+        });
+
     } catch (err) {
+
         await client.query('ROLLBACK');
+
         console.error(err);
-        res.status(500).json({ error: err.message });
+
+        res.status(500).json({
+            error: err.message
+        });
+
     } finally {
+
         client.release();
     }
 });
 
-app.post('/api/admin/subir-a-usuario', verificarToken, permisoAdminDoc, upload.single('archivo'), async (req, res) => {
-    console.log("🟡 [RUTA SUBIR] Usuario conectado - ROL:", req.user.rol, " | ID Usuario:", req.user.id);
-    console.log("🟡 [RUTA SUBIR] Datos recibidos:", req.body.tipo_documento, req.body.usuario_id);
-    if (!req.file) return res.status(400).json({ error: 'El archivo es obligatorio.' });
-    
-    const { tipo_documento, subtipo_documento, usuario_id, nombre_user, es_pasivo, nombre_archivo, fecha_documento, periodo } = req.body;
+app.post(
+    '/api/admin/subir-a-usuario',
+    verificarToken,
+    permisoAdminDoc,
+    upload.single('archivo'),
+    async (req, res) => {
 
-        // ✅ AGREGA ESTA VALIDACIÓN OBLIGATORIA:
-    const existeActivo = await pool.query('SELECT id FROM nomina WHERE id = $1', [usuario_id]);
-    const existePasivo = await pool.query('SELECT id FROM pasivos WHERE id = $1', [usuario_id]);
-    if ( (es_pasivo === 'true' && existePasivo.rows.length === 0) || (es_pasivo !== 'true' && existeActivo.rows.length === 0) ) {
-        return res.status(400).json({ error: "El colaborador no existe o su estado (activo/pasivo) no coincide." });
-    }
-
-    
-let tabla;
-if (tipo_documento === "Certificado de Competencia") {
-    tabla = 'certifi_competencia';
-} else if (tipo_documento === "Acta de EPP's") {
-    tabla = 'acta_epps';
-} else if (tipo_documento === "Certificados Médicos") {
-    tabla = 'docus_medicos';
-} else if (tipo_documento === "Certificados de Aptitud") {
-    tabla = 'certificados_aptitud';
-} 
-// ✅ DESVINCULACIÓN AHORA VA A LA TABLA GENERAL, SIN IMPORTAR SI ES ACTIVO O PASIVO
-else if (tipo_documento === "Desvinculación") {
-    tabla = 'documentos'; 
-} 
-else {
-    tabla = es_pasivo === 'true' ? 'documentos_pasivos' : 'documentos';
-}
-
-    const estadoUsuario = es_pasivo === 'true' ? 'Pasivo' : 'Active'; // Mapeo dinámico para la nueva columna
-
-    try {
-                console.log("🟡 [RUTA SUBIR] Llamando al servicio de OneDrive...");
-
-        const url_onedrive = await subirAOneDrive(req.file.buffer, req.file.originalname, tipo_documento);
-        console.log("🟢 [RUTA SUBIR] ÉXITO: Archivo subido, guardando en BD...");
-
-        if (tabla === 'acta_epps' || tabla === 'certifi_competencia') {
-            await pool.query(
-                `INSERT INTO ${tabla} (usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, estado) 
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, 
-                [usuario_id, tipo_documento, subtipo_documento || 'General / Único', url_onedrive, nombre_user, nombre_archivo, fecha_documento || null, periodo || null, estadoUsuario]
-            );
-        } else {
-            await pool.query(
-                `INSERT INTO ${tabla} (usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo) 
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, 
-                [usuario_id, tipo_documento, subtipo_documento || 'General / Único', url_onedrive, nombre_user, nombre_archivo, fecha_documento || null, periodo || null]
-            );
+        if (!req.file) {
+            return res.status(400).json({
+                error: 'El archivo es obligatorio.'
+            });
         }
-        res.json({ message: 'Ok' });
-    } catch (err) { 
 
-                console.error("🔴 [RUTA SUBIR] FALLO GENERAL:", err.message);
+        const {
+            tipo_documento,
+            subtipo_documento,
+            usuario_id,
+            nombre_user,
+            es_pasivo,
+            nombre_archivo,
+            fecha_documento,
+            periodo
+        } = req.body;
 
-        res.status(500).json({ error: err.message });
-    }
-});
+        try {
 
-// Ejemplo modificado de tu ruta /admin/documentos/:id para que filtre por permisos
-// ✅ RUTA CORREGIDA PARA QUE TODOS VEAN LO SUYO
-app.get('/api/admin/documentos/:id', verificarToken, async (req, res) => {
-        console.log("🟡 [LISTAR] Solicitud de documentos por ROL:", req.user.rol);
+            const persona =
+                await obtenerPersonaDestino(
+                    usuario_id,
+                    es_pasivo
+                );
 
-    const esPasivo = req.query.pasivo === 'true';
-    const tablaPrincipal = esPasivo ? 'documentos_pasivos' : 'documentos';
-    const usuarioId = req.params.id;
+            const tabla =
+                resolverTablaDocumento(
+                    tipo_documento,
+                    persona.esPasivo
+                );
 
-    try {
-        const rolUsuario = req.user.rol;
-        let condiciones = [];
-        const valores = [usuarioId];
+            const estadoUsuario =
+                persona.esPasivo
+                    ? 'Pasivo'
+                    : 'Activo';
 
-        // 🟢 LÓGICA DE PERMISOS MEJORADA
-        if (rolUsuario === 'Talento Humano' || rolUsuario === 'Administrador') {
-            // Ve todo, incluyendo Desvinculación
-        } 
-        else if (rolUsuario === 'doc') {
-            condiciones.push(`d.tipo_documento IN ('Certificados Médicos', 'Certificados de Aptitud')`);
-        } 
-        else if (rolUsuario === 'kelvin') {
-            condiciones.push(`d.tipo_documento IN ('Certificado de Competencia', 'Acta de EPP''s')`);
-        } 
-        else {
 
-      console.log("🟡 [LISTAR] Consultando permisos para departamento:", rolUsuario);
+            const url_onedrive =
+                await subirAOneDrive(
+                    req.file.buffer,
+                    req.file.originalname,
+                    rutaExpedientePersona(
+                        persona,
+                        tipo_documento
+                    )
+                );
 
-            // 🟢 EL ERROR ESTABA AQUÍ:
-            // Consultamos los permisos del departamento del usuario
-            const permisos = await pool.query(`
-                SELECT td.nombre 
-                FROM permisos_departamento pd
-                JOIN tipos_documento td ON pd.tipo_documento_id = td.id
-                WHERE pd.departamento_nombre = $1
-            `, [rolUsuario]);
 
-      console.log("🔵 [LISTAR] Permisos encontrados:", permisos.rows);
+            if (
+                tabla === 'acta_epps' ||
+                tabla === 'certifi_competencia'
+            ) {
 
-            if (permisos.rows.length === 0) {
-                return res.json([]); // Si no tiene permisos asignados, vacío
+                await pool.query(
+                    `
+                    INSERT INTO ${tabla} (
+                        usuario_id,
+                        persona_cedula,
+                        tipo_documento,
+                        subtipo_documento,
+                        url_cloudinary,
+                        nombre_user,
+                        nombre_archivo,
+                        fecha_documento,
+                        periodo,
+                        estado
+                    )
+                    VALUES (
+                        $1,$2,$3,$4,$5,
+                        $6,$7,$8,$9,$10
+                    )
+                    `,
+                    [
+                        persona.id,
+                        persona.cedula,
+                        tipo_documento,
+                        subtipo_documento ||
+                            'General / Único',
+                        url_onedrive,
+                        nombre_user,
+                        nombre_archivo,
+                        fecha_documento || null,
+                        periodo || null,
+                        estadoUsuario
+                    ]
+                );
+
+            } else {
+
+                await pool.query(
+                    `
+                    INSERT INTO ${tabla} (
+                        usuario_id,
+                        persona_cedula,
+                        tipo_documento,
+                        subtipo_documento,
+                        url_cloudinary,
+                        nombre_user,
+                        nombre_archivo,
+                        fecha_documento,
+                        periodo
+                    )
+                    VALUES (
+                        $1,$2,$3,$4,$5,
+                        $6,$7,$8,$9
+                    )
+                    `,
+                    [
+                        persona.id,
+                        persona.cedula,
+                        tipo_documento,
+                        subtipo_documento ||
+                            'General / Único',
+                        url_onedrive,
+                        nombre_user,
+                        nombre_archivo,
+                        fecha_documento || null,
+                        periodo || null
+                    ]
+                );
             }
 
-            const listaPermitidos = permisos.rows.map(p => `'${p.nombre}'`).join(',');
-            condiciones.push(`d.tipo_documento IN (${listaPermitidos})`);
+            res.json({
+                message: 'Ok'
+            });
+
+        } catch (err) {
+
+            console.error(
+                '🔴 [RUTA SUBIR] FALLO GENERAL:',
+                err.message
+            );
+
+            res
+                .status(err.status || 500)
+                .json({
+                    error: err.message
+                });
         }
-
-        const whereClause = condiciones.length > 0 ? `WHERE ${condiciones.join(' AND ')}` : '';
-
-        const query = `
-            SELECT d.*
-            FROM (
-                SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at FROM ${tablaPrincipal} WHERE usuario_id = $1
-                UNION ALL
-                SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at FROM acta_epps WHERE usuario_id = $1
-                UNION ALL
-                SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at FROM certifi_competencia WHERE usuario_id = $1
-            ) AS d
-            ${whereClause}
-            ORDER BY fecha_documento DESC, created_at DESC`;
-            
-        const result = await pool.query(query, valores);
-        res.json(result.rows); // 👈 Aquí devuelve la lista con los enlaces de OneDrive
-    } catch (err) { 
-        console.error("❌ Error al cargar documentos:", err);
-        res.status(500).json({ error: err.message }); 
     }
-});
+);
+// Ejemplo modificado de tu ruta /admin/documentos/:id para que filtre por permisos
+// ✅ RUTA CORREGIDA PARA QUE TODOS VEAN LO SUYO
+app.get(
+    '/api/admin/documentos/:id',
+    verificarToken,
+    async (req, res) => {
+
+        const esPasivo =
+            req.query.pasivo === 'true';
+
+        try {
+
+            const persona =
+                await obtenerPersonaDestino(
+                    req.params.id,
+                    esPasivo
+                );
+
+            const tablaPrincipal =
+                persona.esPasivo
+                    ? 'documentos_pasivos'
+                    : 'documentos';
+
+
+            const result =
+                await pool.query(
+                    `
+                    SELECT *
+                    FROM (
+
+                        SELECT
+                            id,
+                            usuario_id,
+                            persona_cedula,
+                            tipo_documento,
+                            subtipo_documento,
+                            url_cloudinary,
+                            nombre_user,
+                            nombre_archivo,
+                            fecha_documento,
+                            periodo,
+                            created_at,
+                            '${tablaPrincipal}' AS origen
+
+                        FROM ${tablaPrincipal}
+
+                        WHERE persona_cedula = $1
+
+
+                        UNION ALL
+
+
+                        SELECT
+                            id,
+                            usuario_id,
+                            persona_cedula,
+                            tipo_documento,
+                            subtipo_documento,
+                            url_cloudinary,
+                            nombre_user,
+                            nombre_archivo,
+                            fecha_documento,
+                            periodo,
+                            created_at,
+                            'acta_epps' AS origen
+
+                        FROM acta_epps
+
+                        WHERE persona_cedula = $1
+
+
+                        UNION ALL
+
+
+                        SELECT
+                            id,
+                            usuario_id,
+                            persona_cedula,
+                            tipo_documento,
+                            subtipo_documento,
+                            url_cloudinary,
+                            nombre_user,
+                            nombre_archivo,
+                            fecha_documento,
+                            periodo,
+                            created_at,
+                            'certifi_competencia'
+                                AS origen
+
+                        FROM certifi_competencia
+
+                        WHERE persona_cedula = $1
+
+
+                        UNION ALL
+
+
+                        SELECT
+                            id,
+                            usuario_id,
+                            persona_cedula,
+                            tipo_documento,
+                            subtipo_documento,
+                            url_cloudinary,
+                            nombre_user,
+                            nombre_archivo,
+                            fecha_documento,
+                            periodo,
+                            created_at,
+                            'docus_medicos' AS origen
+
+                        FROM docus_medicos
+
+                        WHERE persona_cedula = $1
+
+
+                        UNION ALL
+
+
+                        SELECT
+                            id,
+                            usuario_id,
+                            persona_cedula,
+                            tipo_documento,
+                            subtipo_documento,
+                            url_cloudinary,
+                            nombre_user,
+                            nombre_archivo,
+                            fecha_documento,
+                            periodo,
+                            created_at,
+                            'certificados_aptitud'
+                                AS origen
+
+                        FROM certificados_aptitud
+
+                        WHERE persona_cedula = $1
+
+                    ) d
+
+                    ORDER BY
+                        fecha_documento DESC,
+                        created_at DESC
+                    `,
+                    [
+                        persona.cedula
+                    ]
+                );
+
+
+            res.json(
+                result.rows
+            );
+
+        } catch (err) {
+
+            res
+                .status(err.status || 500)
+                .json({
+                    error: err.message
+                });
+        }
+    }
+);
 
 app.post('/api/subir-empresa', verificarToken, upload.single('archivo'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'El archivo es obligatorio.' });
@@ -645,41 +1203,208 @@ app.delete('/api/admin/documentos-empresa/:id', verificarToken, async (req, res)
 });
 
 // --- ENLACES DE APTITUD MÉDICA ---
-app.get('/api/doctor/aptitud/:id', verificarToken, permisoAdminDoc, async (req, res) => {
-    try {
-        const query = `
-            SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at FROM docus_medicos WHERE usuario_id = $1
-            UNION ALL
-            SELECT id, usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, created_at FROM certificados_aptitud WHERE usuario_id = $1
-            ORDER BY fecha_documento DESC, created_at DESC`;
-        const result = await pool.query(query, [req.params.id]);
-        res.json(result.rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
+app.get(
+    '/api/doctor/aptitud/:id',
+    verificarToken,
+    permisoAdminDoc,
+    async (req, res) => {
 
-app.post('/api/doctor/subir-aptitud', verificarToken, permisoAdminDoc, upload.single('archivo'), async (req, res) => {
-    if (!req.file) return res.status(400).json({ error: 'El archivo es obligatorio.' });
-    const { tipo_documento, subtipo_documento, usuario_id, nombre_user, nombre_archivo, fecha_documento, periodo } = req.body;
-    
-    let tabla = 'documentos'; 
-    if (tipo_documento === 'Certificados Médicos') {
-        tabla = 'docus_medicos';
-    } else if (tipo_documento === 'Certificados de Aptitud') {
-        tabla = 'certificados_aptitud';
-    }
+        try {
 
-    try {
-        const url_onedrive = await subirAOneDrive(req.file.buffer, req.file.originalname, tipo_documento);
-        await pool.query(
-            `INSERT INTO ${tabla} (usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, 
-            [usuario_id, tipo_documento, subtipo_documento, url_onedrive, nombre_user, nombre_archivo, fecha_documento, periodo]
-        );
-        res.json({ message: 'Ok' });
-    } catch (err) { 
-        res.status(500).json({ error: err.message });
+            const persona =
+                await obtenerPersonaDestino(
+                    req.params.id,
+                    req.query.pasivo === 'true'
+                );
+
+            const query = `
+                SELECT
+                    id,
+                    usuario_id,
+                    persona_cedula,
+                    tipo_documento,
+                    subtipo_documento,
+                    url_cloudinary,
+                    nombre_user,
+                    nombre_archivo,
+                    fecha_documento,
+                    periodo,
+                    created_at
+
+                FROM docus_medicos
+
+                WHERE persona_cedula = $1
+
+
+                UNION ALL
+
+
+                SELECT
+                    id,
+                    usuario_id,
+                    persona_cedula,
+                    tipo_documento,
+                    subtipo_documento,
+                    url_cloudinary,
+                    nombre_user,
+                    nombre_archivo,
+                    fecha_documento,
+                    periodo,
+                    created_at
+
+                FROM certificados_aptitud
+
+                WHERE persona_cedula = $1
+
+
+                ORDER BY
+                    fecha_documento DESC,
+                    created_at DESC
+            `;
+
+
+            const result =
+                await pool.query(
+                    query,
+                    [persona.cedula]
+                );
+
+
+            res.json(
+                result.rows
+            );
+
+        } catch (err) {
+
+            res
+                .status(err.status || 500)
+                .json({
+                    error: err.message
+                });
+        }
     }
-});
+);
+
+app.post(
+    '/api/doctor/subir-aptitud',
+    verificarToken,
+    permisoAdminDoc,
+    upload.single('archivo'),
+    async (req, res) => {
+
+        if (!req.file) {
+            return res.status(400).json({
+                error: 'El archivo es obligatorio.'
+            });
+        }
+
+
+        const {
+            tipo_documento,
+            subtipo_documento,
+            usuario_id,
+            nombre_user,
+            nombre_archivo,
+            fecha_documento,
+            periodo,
+            es_pasivo
+        } = req.body;
+
+
+        if (
+            ![
+                'Certificados Médicos',
+                'Certificados de Aptitud'
+            ].includes(tipo_documento)
+        ) {
+
+            return res.status(400).json({
+                error:
+                    'Tipo de documento médico no permitido.'
+            });
+        }
+
+
+        try {
+
+            const persona =
+                await obtenerPersonaDestino(
+                    usuario_id,
+                    es_pasivo
+                );
+
+
+            const tabla =
+                resolverTablaDocumento(
+                    tipo_documento,
+                    persona.esPasivo
+                );
+
+
+            const url_onedrive =
+                await subirAOneDrive(
+                    req.file.buffer,
+                    req.file.originalname,
+                    rutaExpedientePersona(
+                        persona,
+                        tipo_documento
+                    )
+                );
+
+
+            await pool.query(
+                `
+                INSERT INTO ${tabla} (
+                    usuario_id,
+                    persona_cedula,
+                    tipo_documento,
+                    subtipo_documento,
+                    url_cloudinary,
+                    nombre_user,
+                    nombre_archivo,
+                    fecha_documento,
+                    periodo
+                )
+
+                VALUES (
+                    $1,$2,$3,$4,$5,
+                    $6,$7,$8,$9
+                )
+                `,
+                [
+                    persona.id,
+                    persona.cedula,
+                    tipo_documento,
+                    subtipo_documento ||
+                        'General / Único',
+                    url_onedrive,
+                    nombre_user,
+                    nombre_archivo,
+                    fecha_documento || null,
+                    periodo || null
+                ]
+            );
+
+
+            res.json({
+                message: 'Ok'
+            });
+
+        } catch (err) {
+
+            console.error(
+                '🔴 [MÉDICO] Error de subida:',
+                err.message
+            );
+
+            res
+                .status(err.status || 500)
+                .json({
+                    error: err.message
+                });
+        }
+    }
+);
 
 // RESPALDO ASEGURADO: Solo elimina el registro de PostgreSQL
 app.delete('/api/doctor/aptitud/:id', verificarToken, permisoAdminDoc, async (req, res) => {
@@ -704,33 +1429,134 @@ app.delete('/api/doctor/aptitud/:id', verificarToken, permisoAdminDoc, async (re
 });
 
 // --- ENLACES GESTOR KELVIN ---
-app.post('/api/kelvin/subir-certificados', verificarToken, permisoAdminDoc, upload.single('archivo'), async (req, res) => {
-    if (!req.file) return res.status(400).json({ error: 'El archivo es obligatorio.' });
-    const { tipo_documento, subtipo_documento, usuario_id, nombre_archivo, fecha_documento, periodo, es_pasivo } = req.body;
-    let tabla = '';
+app.post(
+    '/api/kelvin/subir-certificados',
+    verificarToken,
+    permisoAdminDoc,
+    upload.single('archivo'),
+    async (req, res) => {
 
-    if (tipo_documento === "Certificado de Competencia") {
-        tabla = 'certifi_competencia';
-    } else if (tipo_documento === "Acta de EPP's") {
-        tabla = 'acta_epps';
-    } else {
-        return res.status(400).json({ error: "Tipo de documento no permitido para Kelvin" });
+        if (!req.file) {
+
+            return res.status(400).json({
+                error: 'El archivo es obligatorio.'
+            });
+        }
+
+
+        const {
+            tipo_documento,
+            subtipo_documento,
+            usuario_id,
+            nombre_archivo,
+            fecha_documento,
+            periodo,
+            es_pasivo
+        } = req.body;
+
+
+        if (
+            ![
+                'Certificado de Competencia',
+                "Acta de EPP's"
+            ].includes(tipo_documento)
+        ) {
+
+            return res.status(400).json({
+                error:
+                    'Tipo de documento no permitido para Kelvin.'
+            });
+        }
+
+
+        try {
+
+            const persona =
+                await obtenerPersonaDestino(
+                    usuario_id,
+                    es_pasivo
+                );
+
+
+            const tabla =
+                resolverTablaDocumento(
+                    tipo_documento,
+                    persona.esPasivo
+                );
+
+
+            const estadoUsuario =
+                persona.esPasivo
+                    ? 'Pasivo'
+                    : 'Activo';
+
+
+            const url_onedrive =
+                await subirAOneDrive(
+                    req.file.buffer,
+                    req.file.originalname,
+                    rutaExpedientePersona(
+                        persona,
+                        tipo_documento
+                    )
+                );
+
+
+            await pool.query(
+                `
+                INSERT INTO ${tabla} (
+                    usuario_id,
+                    persona_cedula,
+                    tipo_documento,
+                    subtipo_documento,
+                    url_cloudinary,
+                    nombre_user,
+                    nombre_archivo,
+                    fecha_documento,
+                    periodo,
+                    estado
+                )
+
+                VALUES (
+                    $1,$2,$3,$4,$5,
+                    $6,$7,$8,$9,$10
+                )
+                `,
+                [
+                    persona.id,
+                    persona.cedula,
+                    tipo_documento,
+                    subtipo_documento ||
+                        'General / Único',
+                    url_onedrive,
+                    'Gestor Kelvin',
+                    nombre_archivo,
+                    fecha_documento || null,
+                    periodo || null,
+                    estadoUsuario
+                ]
+            );
+
+
+            res.json({
+                message: 'Ok'
+            });
+
+        } catch (err) {
+
+            console.error(
+                '🔴 [KELVIN] Error de subida:',
+                err.message
+            );
+
+            res
+                .status(err.status || 500)
+                .json({
+                    error: err.message
+                });
+        }
     }
-
-    const estadoUsuario = es_pasivo === 'true' ? 'Pasivo' : 'Activo';
-
-    try {
-        const url_onedrive = await subirAOneDrive(req.file.buffer, req.file.originalname, tipo_documento);
-        await pool.query(
-            `INSERT INTO ${tabla} (usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo, estado) 
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, 
-            [usuario_id, tipo_documento, subtipo_documento || 'General / Único', url_onedrive, 'Gestor Kelvin', nombre_archivo, fecha_documento || null, periodo || null, estadoUsuario]
-        );
-        res.json({ message: 'Ok' });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
+);
 
 app.get('/api/kelvin/documentos/:id', verificarToken, permisoAdminDoc, async (req, res) => {
     try {
@@ -1137,220 +1963,467 @@ app.get('/api/mis-tipos-permitidos', verificarToken, async (req, res) => {
  * Cualquier rol (Gerencia, Finanzas, Sistemas, etc.) puede usar esta ruta
  * Guarda en la tabla 'documentos' y respeta los permisos
  */
-app.post('/api/usuario/subir-documento', verificarToken, upload.single('archivo'), async (req, res) => {
-    console.log("🟡 [RUTA - USUARIO SUBE] Solicitud recibida de:", req.user.rol, "ID:", req.user.id);
+app.post(
+    '/api/usuario/subir-documento',
+    verificarToken,
+    upload.single('archivo'),
+    async (req, res) => {
 
-    // 🔐 Solo verifica que esté logueado, NO BLOQUEA POR ROL
-    if (!req.file) {
-        console.log("🔴 [RUTA - USUARIO SUBE] Error: Sin archivo");
-        return res.status(400).json({ error: 'El archivo es obligatorio.' });
+        if (!req.file) {
+
+            return res.status(400).json({
+                error: 'El archivo es obligatorio.'
+            });
+        }
+
+
+        const {
+            tipo_documento,
+            subtipo_documento,
+            usuario_id,
+            nombre_user,
+            nombre_archivo,
+            fecha_documento,
+            periodo,
+            es_pasivo
+        } = req.body;
+
+
+        try {
+
+            const persona =
+                await obtenerPersonaDestino(
+                    usuario_id,
+                    es_pasivo
+                );
+
+
+            // ==========================================
+            // VALIDAR PERMISOS
+            // ==========================================
+
+            if (
+                req.user.rol !== 'Talento Humano' &&
+                req.user.rol !== 'Administrador'
+            ) {
+
+                const permiso =
+                    await pool.query(
+                        `
+                        SELECT 1
+
+                        FROM permisos_departamento pd
+
+                        JOIN tipos_documento td
+                            ON td.id =
+                               pd.tipo_documento_id
+
+                        WHERE
+                            pd.departamento_nombre = $1
+                            AND td.nombre = $2
+
+                        LIMIT 1
+                        `,
+                        [
+                            req.user.rol,
+                            tipo_documento
+                        ]
+                    );
+
+
+                if (permiso.rows.length === 0) {
+
+                    return res.status(403).json({
+                        error:
+                            'No tiene permiso para subir este tipo de documento.'
+                    });
+                }
+            }
+
+
+            const tabla =
+                resolverTablaDocumento(
+                    tipo_documento,
+                    persona.esPasivo
+                );
+
+
+            const estadoUsuario =
+                persona.esPasivo
+                    ? 'Pasivo'
+                    : 'Activo';
+
+
+            const url_onedrive =
+                await subirAOneDrive(
+                    req.file.buffer,
+                    req.file.originalname,
+                    rutaExpedientePersona(
+                        persona,
+                        tipo_documento
+                    )
+                );
+
+
+            if (
+                tabla === 'acta_epps' ||
+                tabla === 'certifi_competencia'
+            ) {
+
+                await pool.query(
+                    `
+                    INSERT INTO ${tabla} (
+                        usuario_id,
+                        persona_cedula,
+                        tipo_documento,
+                        subtipo_documento,
+                        url_cloudinary,
+                        nombre_user,
+                        nombre_archivo,
+                        fecha_documento,
+                        periodo,
+                        estado
+                    )
+
+                    VALUES (
+                        $1,$2,$3,$4,$5,
+                        $6,$7,$8,$9,$10
+                    )
+                    `,
+                    [
+                        persona.id,
+                        persona.cedula,
+                        tipo_documento,
+                        subtipo_documento ||
+                            'General / Único',
+                        url_onedrive,
+                        nombre_user,
+                        nombre_archivo,
+                        fecha_documento || null,
+                        periodo || null,
+                        estadoUsuario
+                    ]
+                );
+
+            } else {
+
+                await pool.query(
+                    `
+                    INSERT INTO ${tabla} (
+                        usuario_id,
+                        persona_cedula,
+                        tipo_documento,
+                        subtipo_documento,
+                        url_cloudinary,
+                        nombre_user,
+                        nombre_archivo,
+                        fecha_documento,
+                        periodo
+                    )
+
+                    VALUES (
+                        $1,$2,$3,$4,$5,
+                        $6,$7,$8,$9
+                    )
+                    `,
+                    [
+                        persona.id,
+                        persona.cedula,
+                        tipo_documento,
+                        subtipo_documento ||
+                            'General / Único',
+                        url_onedrive,
+                        nombre_user,
+                        nombre_archivo,
+                        fecha_documento || null,
+                        periodo || null
+                    ]
+                );
+            }
+
+
+            res.json({
+                success: true,
+                message:
+                    'Documento subido correctamente'
+            });
+
+
+        } catch (err) {
+
+            console.error(
+                '🔴 [RUTA - USUARIO SUBE] ERROR:',
+                err.message
+            );
+
+            res
+                .status(err.status || 500)
+                .json({
+                    error: err.message
+                });
+        }
     }
-
-    const { tipo_documento, subtipo_documento, usuario_id, nombre_user, nombre_archivo, fecha_documento, periodo } = req.body;
-
-    try {
-        console.log("🟡 [RUTA - USUARIO SUBE] Enviando a OneDrive...");
-        // 1. Subir a OneDrive (siempre a la misma cuenta y carpeta según tipo)
-        const url_onedrive = await subirAOneDrive(req.file.buffer, req.file.originalname, tipo_documento);
-        console.log("✅ [RUTA - USUARIO SUBE] Archivo en la nube:", url_onedrive);
-
-        // 2. Guardar en la tabla principal: documentos
-        const queryInsert = `
-            INSERT INTO documentos 
-            (usuario_id, tipo_documento, subtipo_documento, url_cloudinary, nombre_user, nombre_archivo, fecha_documento, periodo) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        `;
-        const valores = [
-            usuario_id, 
-            tipo_documento, 
-            subtipo_documento || 'General / Único', 
-            url_onedrive, 
-            nombre_user, 
-            nombre_archivo, 
-            fecha_documento || null, 
-            periodo || null
-        ];
-
-        await pool.query(queryInsert, valores);
-        console.log("💾 [RUTA - USUARIO SUBE] Guardado en BD correctamente");
-
-        res.json({ success: true, message: 'Documento subido correctamente' });
-
-    } catch (err) {
-        console.error("🔴 [RUTA - USUARIO SUBE] ERROR:", err.message);
-        res.status(500).json({ error: 'Error al procesar: ' + err.message });
-    }
-});
+);
 
 /**
  * ✅ LECTURA TOTAL UNIFICADA - CORREGIDA SIN DUPLICADOS
  * Lee de TODAS LAS TABLAS, une todo y filtra por permisos EXACTOS
  * AHORA SIN DUPLICAR LA TABLA DE MÉDICOS
  */
-app.get('/api/usuario/mis-documentos/:id', verificarToken, async (req, res) => {
-    console.log("🟢 [LECTURA TOTAL] Usuario:", req.user.nombre, " | Rol/Departamento:", req.user.rol, " | ID Empleado:", req.params.id);
+app.get(
+    '/api/usuario/mis-documentos/:id',
+    verificarToken,
+    async (req, res) => {
 
-    const usuarioId = req.params.id;
-    const rolActual = req.user.rol;
-    let condicionTipo = '';
-    let valores = [usuarioId];
+        const usuarioId =
+            req.params.id;
 
-    try {
-        // ==============================================
-        // 🧠 LÓGICA DE PERMISOS - CORREGIDA Y ESTANDARIZADA
-        // ==============================================
-        if (rolActual === 'Talento Humano' || rolActual === 'Administrador') {
-            // 🔓 Acceso total: ve todo
-            condicionTipo = '';
-            console.log("✅ Acceso TOTAL concedido");
-        } 
-        else {
-            // 🔒 Otros roles: solo lo que tiene asignado en la tabla de permisos
-            const permisos = await pool.query(`
-                SELECT td.nombre 
-                FROM permisos_departamento pd
-                JOIN tipos_documento td ON pd.tipo_documento_id = td.id
-                WHERE pd.departamento_nombre = $1
-            `, [rolActual]);
+        const esPasivo =
+            req.query.pasivo === 'true';
 
-            if (permisos.rows.length === 0) {
-                console.log("⚠️ Sin permisos asignados para:", rolActual);
-                return res.json([]);
+        const rolActual =
+            req.user.rol;
+
+
+        try {
+
+            // ==========================================
+            // IDENTIDAD REAL DEL COLABORADOR
+            // ==========================================
+
+            const persona =
+                await obtenerPersonaDestino(
+                    usuarioId,
+                    esPasivo
+                );
+
+
+            const cedula =
+                persona.cedula;
+
+
+            const tablaPrincipal =
+                persona.esPasivo
+                    ? 'documentos_pasivos'
+                    : 'documentos';
+
+
+            // ==========================================
+            // PERMISOS
+            // ==========================================
+
+            let condicionTipo = '';
+
+
+            if (
+                rolActual !== 'Talento Humano' &&
+                rolActual !== 'Administrador'
+            ) {
+
+                const permisos =
+                    await pool.query(
+                        `
+                        SELECT td.nombre
+
+                        FROM permisos_departamento pd
+
+                        JOIN tipos_documento td
+                            ON pd.tipo_documento_id =
+                               td.id
+
+                        WHERE
+                            pd.departamento_nombre = $1
+                        `,
+                        [rolActual]
+                    );
+
+
+                if (
+                    permisos.rows.length === 0
+                ) {
+
+                    return res.json([]);
+                }
+
+
+                const listaTipos =
+                    permisos.rows
+                        .map(
+                            item =>
+                                `'${item.nombre.replace(
+                                    /'/g,
+                                    "''"
+                                )}'`
+                        )
+                        .join(',');
+
+
+                condicionTipo =
+                    `AND tipo_documento IN (${listaTipos})`;
             }
 
-            // ✅ ASEGURAMOS QUE LOS NOMBRES COINCIDAN 100% (con comillas si tienen apóstrofo)
-            const listaTipos = permisos.rows.map(item => `'${item.nombre.replace(/'/g, "''")}'`).join(',');
-            condicionTipo = `AND tipo_documento IN (${listaTipos})`;
-            console.log("✅ Tipos permitidos cargados:", permisos.rows.map(p => p.nombre));
-        }
 
+            // ==========================================
+            // EXPEDIENTE POR CÉDULA
+            // ==========================================
 
-        // ==============================================
-        // 📃 CONSULTA: LEE Y UNE TODAS LAS TABLAS EXISTENTES
-        // ✅ CORRECCIÓN: ELIMINADA LA SEGUNDA LLAMADA A docus_medicos QUE CAUSABA DUPLICADOS
-        // ==============================================
             const consultaFinal = `
-            SELECT * FROM (
 
-                SELECT
-                    id,
-                    usuario_id,
-                    tipo_documento,
-                    subtipo_documento,
-                    url_cloudinary,
-                    nombre_user,
-                    nombre_archivo,
-                    fecha_documento,
-                    periodo,
-                    created_at,
-                    'documentos' AS origen
-                FROM documentos
-                WHERE usuario_id = $1
+                SELECT *
 
-                UNION ALL
+                FROM (
 
-                SELECT
-                    id,
-                    usuario_id,
-                    tipo_documento,
-                    subtipo_documento,
-                    url_cloudinary,
-                    nombre_user,
-                    nombre_archivo,
-                    fecha_documento,
-                    periodo,
-                    created_at,
-                    'acta_epps' AS origen
-                FROM acta_epps
-                WHERE usuario_id = $1
+                    SELECT
+                        id,
+                        usuario_id,
+                        persona_cedula,
+                        tipo_documento,
+                        subtipo_documento,
+                        url_cloudinary,
+                        nombre_user,
+                        nombre_archivo,
+                        fecha_documento,
+                        periodo,
+                        created_at,
+                        '${tablaPrincipal}' AS origen
 
-                UNION ALL
+                    FROM ${tablaPrincipal}
 
-                SELECT
-                    id,
-                    usuario_id,
-                    tipo_documento,
-                    subtipo_documento,
-                    url_cloudinary,
-                    nombre_user,
-                    nombre_archivo,
-                    fecha_documento,
-                    periodo,
-                    created_at,
-                    'certifi_competencia' AS origen
-                FROM certifi_competencia
-                WHERE usuario_id = $1
+                    WHERE persona_cedula = $1
 
-                UNION ALL
 
-                SELECT
-                    id,
-                    usuario_id,
-                    tipo_documento,
-                    subtipo_documento,
-                    url_cloudinary,
-                    nombre_user,
-                    nombre_archivo,
-                    fecha_documento,
-                    periodo,
-                    created_at,
-                    'docus_medicos' AS origen
-                FROM docus_medicos
-                WHERE usuario_id = $1
+                    UNION ALL
 
-                UNION ALL
 
-                SELECT
-                    id,
-                    usuario_id,
-                    tipo_documento,
-                    subtipo_documento,
-                    url_cloudinary,
-                    nombre_user,
-                    nombre_archivo,
-                    fecha_documento,
-                    periodo,
-                    created_at,
-                    'certificados_aptitud' AS origen
-                FROM certificados_aptitud
-                WHERE usuario_id = $1
+                    SELECT
+                        id,
+                        usuario_id,
+                        persona_cedula,
+                        tipo_documento,
+                        subtipo_documento,
+                        url_cloudinary,
+                        nombre_user,
+                        nombre_archivo,
+                        fecha_documento,
+                        periodo,
+                        created_at,
+                        'acta_epps' AS origen
 
-                UNION ALL
+                    FROM acta_epps
 
-                SELECT
-                    id,
-                    usuario_id,
-                    tipo_documento,
-                    subtipo_documento,
-                    url_cloudinary,
-                    nombre_user,
-                    nombre_archivo,
-                    fecha_documento,
-                    periodo,
-                    created_at,
-                    'documentos_pasivos' AS origen
-                FROM documentos_pasivos
-                WHERE usuario_id = $1
+                    WHERE persona_cedula = $1
 
-            ) AS todos_los_docs
 
-            WHERE 1=1 ${condicionTipo}
+                    UNION ALL
 
-            ORDER BY
-                fecha_documento DESC,
-                created_at DESC
-        `;
 
-        const resultado = await pool.query(consultaFinal, valores);
+                    SELECT
+                        id,
+                        usuario_id,
+                        persona_cedula,
+                        tipo_documento,
+                        subtipo_documento,
+                        url_cloudinary,
+                        nombre_user,
+                        nombre_archivo,
+                        fecha_documento,
+                        periodo,
+                        created_at,
+                        'certifi_competencia'
+                            AS origen
 
-        console.log(`📄 Total documentos encontrados: ${resultado.rows.length}`);
-        res.json(resultado.rows);
+                    FROM certifi_competencia
 
-    } catch (error) {
-        console.error("🔴 ERROR LECTURA TOTAL:", error.message);
-        res.status(500).json({ error: "Error al cargar documentos: " + error.message });
+                    WHERE persona_cedula = $1
+
+
+                    UNION ALL
+
+
+                    SELECT
+                        id,
+                        usuario_id,
+                        persona_cedula,
+                        tipo_documento,
+                        subtipo_documento,
+                        url_cloudinary,
+                        nombre_user,
+                        nombre_archivo,
+                        fecha_documento,
+                        periodo,
+                        created_at,
+                        'docus_medicos'
+                            AS origen
+
+                    FROM docus_medicos
+
+                    WHERE persona_cedula = $1
+
+
+                    UNION ALL
+
+
+                    SELECT
+                        id,
+                        usuario_id,
+                        persona_cedula,
+                        tipo_documento,
+                        subtipo_documento,
+                        url_cloudinary,
+                        nombre_user,
+                        nombre_archivo,
+                        fecha_documento,
+                        periodo,
+                        created_at,
+                        'certificados_aptitud'
+                            AS origen
+
+                    FROM certificados_aptitud
+
+                    WHERE persona_cedula = $1
+
+                ) AS todos_los_docs
+
+
+                WHERE 1=1
+                    ${condicionTipo}
+
+
+                ORDER BY
+                    fecha_documento DESC,
+                    created_at DESC
+
+            `;
+
+
+            const resultado =
+                await pool.query(
+                    consultaFinal,
+                    [cedula]
+                );
+
+
+            res.json(
+                resultado.rows
+            );
+
+
+        } catch (error) {
+
+            console.error(
+                '🔴 ERROR LECTURA EXPEDIENTE:',
+                error.message
+            );
+
+
+            res
+                .status(error.status || 500)
+                .json({
+                    error: error.message
+                });
+        }
     }
-});
+);
 
 // ✅ NUEVA RUTA: Obtener imagen SIEMPRE VÁLIDA (soluciona imágenes que desaparecen)
 app.get('/api/imagen/:id', async (req, res) => {
