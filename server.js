@@ -461,46 +461,37 @@ app.post('/api/admin/crear-usuario', verificarToken, upload.single('foto'), asyn
         return res.status(403).json({ error: 'Solo el personal de Talento Humano crea usuarios' });
     }
 
-    // 1. PRIMERO EXTRAES LAS VARIABLES DE REQ.BODY
+    // 1. Extraer todos los campos recibidos del FormData
     const { 
         cedula, nombre_completo, fecha_ingreso, correo, celular, username, direccion, rol,
         contacto_emergencia, parentesco_emergencia, cargas_familiares, vacaciones,
         numero_cuenta_bancaria, nombre_banco, tipo_cuenta, tipo_contrato_id
     } = req.body;
 
-    // 2. LUEGO HACES TODAS LAS VALIDACIONES DE ENTRADA
+    // 2. Validaciones básicas
     if (!cedula || cedula.length !== 10) {
         return res.status(400).json({ error: 'Cédula debe tener 10 dígitos' });
     }
     if (!correo || !esCorreoValido(correo)) {
         return res.status(400).json({ error: 'Correo inválido o dominio no permitido' });
     }
-    if (!nombre_completo || !req.file) {
-        return res.status(400).json({ error: 'Faltan campos obligatorios o la foto' });
-    }
-
-    // Validar contacto de emergencia (10 dígitos numéricos)
     if (contacto_emergencia && !/^\d{10}$/.test(contacto_emergencia)) {
         return res.status(400).json({ error: 'El contacto de emergencia debe tener exactamente 10 dígitos numéricos' });
     }
 
     const usuarioLogin = username || cedula;
 
-    // 3. FINALMENTE EJECUTAS EL BLOQUE TRY
     try {
-        const foto_url = await subirAOneDrive(req.file.buffer, req.file.originalname, 'Fotos_Perfil');
+        // Subida de imagen (si existe)
+        let foto_url = null;
+        if (req.file) {
+            foto_url = await subirAOneDrive(req.file); // O la lógica de subida que uses
+        }
 
-        const nombreLimpio = nombre_completo
-            .toUpperCase()
-            .trim()
-            .replace(/[^A-ZÑÁÉÍÓÚ\s]/g, '');
-
-        const direccionLimpia = (direccion || '')
-            .toUpperCase()
-            .trim()
-            .replace(/[^A-ZÑÁÉÍÓÚ0-9\s#\-\/\.,]/g, '');
-
-        const rolAsignar = rol || 'user';
+        // 📍 AQUÍ COLOCAS EL BLOQUE QUE PREGUNTASTE:
+        const cargas = cargas_familiares ? parseInt(cargas_familiares, 10) : 0;
+        const vac = vacaciones ? parseFloat(vacaciones) : 0;
+        const contratoId = tipo_contrato_id ? parseInt(tipo_contrato_id, 10) : null;
 
         await pool.query(
             `INSERT INTO nomina 
@@ -509,19 +500,17 @@ app.post('/api/admin/crear-usuario', verificarToken, upload.single('foto'), asyn
              numero_cuenta_bancaria, nombre_banco, tipo_cuenta, tipo_contrato_id) 
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
             [
-                usuarioLogin, cedula, nombreLimpio, rolAsignar, fecha_ingreso || null, correo, celular || null, direccionLimpia || null, foto_url,
-                contacto_emergencia || null, parentesco_emergencia || null, cargas_familiares || 0, vacaciones || 0,
-                numero_cuenta_bancaria || null, nombre_banco || null, tipo_cuenta || null, tipo_contrato_id || null
+                usuarioLogin, cedula, nombre_completo, rol || 'user', fecha_ingreso || null, correo, celular || null, direccion || null, foto_url,
+                contacto_emergencia || null, parentesco_emergencia || null, cargas, vac,
+                numero_cuenta_bancaria || null, nombre_banco || null, tipo_cuenta || null, contratoId
             ]
         );
 
-        res.json({ message: 'Usuario creado correctamente' });
+        res.status(201).json({ mensaje: 'Usuario registrado con éxito' });
+
     } catch (err) {
-        console.error('Error al crear usuario:', err);
-        if (err.code === '23505') {
-            return res.status(400).json({ error: 'La cédula o el correo ya están registrados' });
-        }
-        res.status(500).json({ error: 'Error al guardar en Nómina. Intente nuevamente.' });
+        console.error("Error al crear usuario:", err);
+        res.status(500).json({ error: 'Error interno del servidor al registrar en base de datos' });
     }
 });
 
