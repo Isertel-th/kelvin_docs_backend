@@ -2699,7 +2699,8 @@ app.get('/api/tipos-contrato', verificarToken, async (req, res) => {
         const result = await pool.query('SELECT * FROM tipo_contratos ORDER BY nombre ASC');
         res.json(result.rows);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error('Error al obtener tipos de contrato:', err);
+        res.status(500).json({ error: 'Error interno al consultar tipos de contrato' });
     }
 });
 
