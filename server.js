@@ -461,12 +461,14 @@ app.post('/api/admin/crear-usuario', verificarToken, upload.single('foto'), asyn
         return res.status(403).json({ error: 'Solo el personal de Talento Humano crea usuarios' });
     }
 
+    // 1. PRIMERO EXTRAES LAS VARIABLES DE REQ.BODY
     const { 
         cedula, nombre_completo, fecha_ingreso, correo, celular, username, direccion, rol,
         contacto_emergencia, parentesco_emergencia, cargas_familiares, vacaciones,
         numero_cuenta_bancaria, nombre_banco, tipo_cuenta, tipo_contrato_id
     } = req.body;
 
+    // 2. LUEGO HACES TODAS LAS VALIDACIONES DE ENTRADA
     if (!cedula || cedula.length !== 10) {
         return res.status(400).json({ error: 'Cédula debe tener 10 dígitos' });
     }
@@ -477,8 +479,14 @@ app.post('/api/admin/crear-usuario', verificarToken, upload.single('foto'), asyn
         return res.status(400).json({ error: 'Faltan campos obligatorios o la foto' });
     }
 
+    // Validar contacto de emergencia (10 dígitos numéricos)
+    if (contacto_emergencia && !/^\d{10}$/.test(contacto_emergencia)) {
+        return res.status(400).json({ error: 'El contacto de emergencia debe tener exactamente 10 dígitos numéricos' });
+    }
+
     const usuarioLogin = username || cedula;
 
+    // 3. FINALMENTE EJECUTAS EL BLOQUE TRY
     try {
         const foto_url = await subirAOneDrive(req.file.buffer, req.file.originalname, 'Fotos_Perfil');
 
@@ -523,20 +531,15 @@ app.put('/api/admin/modificar-usuario/:tabla/:id', verificarToken, upload.single
     }
 
     const { tabla, id } = req.params;
+
+    // 1. PRIMERO EXTRAES LAS VARIABLES DE REQ.BODY
     const { 
         cedula, nombre_completo, fecha_ingreso, correo, celular, direccion, username,
         contacto_emergencia, parentesco_emergencia, cargas_familiares, vacaciones,
         numero_cuenta_bancaria, nombre_banco, tipo_cuenta, tipo_contrato_id
     } = req.body;
 
-    const tablasPermitidas = ['nomina'];
-    if (!tablasPermitidas.includes(tabla)) {
-        return res.status(400).json({ error: 'Tabla de destino no válida' });
-    }
-    if (tabla === 'pasivos') {
-        return res.status(403).json({ error: 'Los registros de personal pasivo son históricos y no se pueden modificar.' });
-    }
-
+    // 2. LUEGO HACES LAS VALIDACIONES
     if (!cedula || cedula.length !== 10) {
         return res.status(400).json({ error: 'La cédula debe tener exactamente 10 dígitos' });
     }
@@ -547,6 +550,12 @@ app.put('/api/admin/modificar-usuario/:tabla/:id', verificarToken, upload.single
         return res.status(400).json({ error: 'El nombre completo es obligatorio' });
     }
 
+    // Validar contacto de emergencia (10 dígitos numéricos)
+    if (contacto_emergencia && !/^\d{10}$/.test(contacto_emergencia)) {
+        return res.status(400).json({ error: 'El contacto de emergencia debe tener exactamente 10 dígitos numéricos' });
+    }
+
+    // 3. FINALMENTE EJECUTAS EL BLOQUE TRY
     try {
         const existeUser = await pool.query(`SELECT foto_url FROM ${tabla} WHERE id = $1`, [id]);
         if (existeUser.rows.length === 0) {
