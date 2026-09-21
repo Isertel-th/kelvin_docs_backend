@@ -38,38 +38,28 @@ const cca = new msal.ConfidentialClientApplication(msalConfig);
 // Función auxiliar para subir archivos directos a OneDrive usando Microsoft Graph
 // ✅ FUNCIÓN CORREGIDA Y MEJORADA PARA ONEDRIVE
 // ✅ OPTIMIZACIÓN: GUARDAR TOKEN PARA NO PEDIRLO SIEMPRE
-// server.js - Reemplaza la función obtenerTokenValido por esta versión:
 let _cachedToken = null;
 let _tokenExpiresAt = 0;
-let _tokenPromise = null;
 
 async function obtenerTokenValido() {
-    const ahora = Date.now() / 1000;
-    
+    const ahora = Date.now() / 1000; // Tiempo actual en segundos
+    // ✅ MEJORA: Si el token existe y le falta más de 10 minutos para vencer, lo reutilizamos
     if (_cachedToken && _tokenExpiresAt > (ahora + 600)) { 
         return _cachedToken;
     }
 
-    if (_tokenPromise) {
-        return await _tokenPromise;
-    }
+    // Si no es válido, pedimos uno nuevo
+    const tokenRequest = { scopes: ['https://graph.microsoft.com/.default'] };
+    const response = await cca.acquireTokenByClientCredential(tokenRequest);
+    
+    if (!response || !response.accessToken) throw new Error("No se pudo obtener token");
 
-    _tokenPromise = (async () => {
-        try {
-            const tokenRequest = { scopes: ['https://graph.microsoft.com/.default'] };
-            const response = await cca.acquireTokenByClientCredential(tokenRequest);
-            if (!response || !response.accessToken) throw new Error("No se pudo obtener token");
-            
-            _cachedToken = response.accessToken;
-            _tokenExpiresAt = response.expiresOnTimestamp;
-            console.log("🔑 Nuevo token OneDrive obtenido y guardado");
-            return _cachedToken;
-        } finally {
-            _tokenPromise = null;
-        }
-    })();
-
-    return await _tokenPromise;
+    // Guardamos el token y su fecha de vencimiento
+    _cachedToken = response.accessToken;
+    _tokenExpiresAt = response.expiresOnTimestamp;
+    
+    console.log("🔑 Nuevo token OneDrive obtenido y guardado");
+    return _cachedToken;
 }
 // =============================================================
 // ✅ ONEDRIVE: RUTAS SEGURAS POR PERSONA / TIPO DE DOCUMENTO
@@ -460,16 +450,13 @@ app.get('/api/admin/pasivos', verificarToken, permisoAdminDoc, async (req, res) 
 });
 
 app.post('/api/admin/crear-usuario', verificarToken, upload.single('foto'), async (req, res) => {
+    // Verificación de rol
     if (req.user.rol !== 'Talento Humano') {
-        return res.status(403).json({ error: 'Solo Talento Humano crea usuarios' });
+        return res.status(403).json({ error: 'Solo el personal de Talento Humano crea usuarios' });
     }
-    const { 
-        cedula, nombre_completo, fecha_ingreso, correo, celular, direccion, rol,
-        contacto_emergencia_nombre, contacto_emergencia_telefono, contacto_emergencia_parentesco,
-        cargas_familiares, vacaciones,
-        banco_nombre, banco_tipo_cuenta, banco_cuenta,
-        tipo_contrato_id
-    } = req.body;
+
+    // Extraemos todos los campos incluyendo dirección
+    const { cedula, nombre_completo, fecha_ingreso, correo, celular, username, direccion, rol } = req.body;
 
     // Validaciones mejoradas
     if (!cedula || cedula.length !== 10) {
@@ -483,83 +470,130 @@ app.post('/api/admin/crear-usuario', verificarToken, upload.single('foto'), asyn
     }
 
     // Valor por defecto para username
-    const usuarioLogin = cedula;
+    const usuarioLogin = username || cedula;
 
-try {
-        const foto_url = req.file ? await subirAOneDrive(req.file.buffer, req.file.originalname, 'Fotos_Perfil') : null;
-        const nombreLimpio = nombre_completo.toUpperCase().trim().replace(/[^A-ZÑÁÉÍÓÚ\s]/g, '');
-        const direccionLimpia = (direccion || '').toUpperCase().trim().replace(/[^A-ZÑÁÉÍÓÚ0-9\s#\-\/\.,]/g, '');
-        
+    try {
+        // Subida de imagen
+        const foto_url = await subirAOneDrive(req.file.buffer, req.file.originalname, 'Fotos_Perfil');
+
+        // ✅ Limpieza y formateo del nombre (solo letras, ñ y espacios)
+        const nombreLimpio = nombre_completo
+            .toUpperCase()
+            .trim()
+            .replace(/[^A-ZÑÁÉÍÓÚ\s]/g, ''); // Acepta vocales con tilde también
+
+        // ✅ Limpieza y formateo de dirección (admite caracteres usados en direcciones)
+        const direccionLimpia = (direccion || '')
+            .toUpperCase()
+            .trim()
+            .replace(/[^A-ZÑÁÉÍÓÚ0-9\s#\-\/\.,]/g, ''); // Permite números y símbolos comunes
+
+        // ✅ Rol: si viene del cuerpo usarlo, si no por defecto 'user'
+        const rolAsignar = rol || 'user';
+
+        // Inserción en base de datos
         await pool.query(
-            `INSERT INTO nomina (
-                username, cedula, nombre_completo, rol, fecha_ingreso, correo, celular, direccion, foto_url,
-                contacto_emergencia_nombre, contacto_emergencia_telefono, contacto_emergencia_parentesco,
-                cargas_familiares, vacaciones,
-                banco_nombre, banco_tipo_cuenta, banco_cuenta,
-                tipo_contrato_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
-            [
-                cedula, cedula, nombreLimpio, rol || 'user', fecha_ingreso || null, correo, celular || null, direccionLimpia || null, foto_url,
-                contacto_emergencia_nombre || null, contacto_emergencia_telefono || null, contacto_emergencia_parentesco || null,
-                cargas_familiares || 0, vacaciones || 0,
-                banco_nombre || null, banco_tipo_cuenta || null, banco_cuenta || null,
-                tipo_contrato_id || null
-            ]
+            `INSERT INTO nomina 
+            (username, cedula, nombre_completo, rol, fecha_ingreso, correo, celular, direccion, foto_url) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+            [usuarioLogin, cedula, nombreLimpio, rolAsignar, fecha_ingreso || null, correo, celular || null, direccionLimpia || null, foto_url]
         );
+
         res.json({ message: 'Usuario creado correctamente' });
     } catch (err) {
-        if (err.code === '23505') return res.status(400).json({ error: 'La cédula o el correo ya están registrados' });
-        res.status(500).json({ error: 'Error al guardar' });
+        console.error('Error al crear usuario:', err);
+        // Si es error de duplicado (cédula/correo)
+        if (err.code === '23505') { // Código PostgreSQL para duplicado
+            return res.status(400).json({ error: 'La cédula o el correo ya están registrados' });
+        }
+        res.status(500).json({ error: 'Error al guardar en Nómina. Intente nuevamente.' });
     }
 });
 
 app.put('/api/admin/modificar-usuario/:tabla/:id', verificarToken, upload.single('foto'), async (req, res) => {
+    // Verificación de rol
     if (req.user.rol !== 'Talento Humano') {
-        return res.status(403).json({ error: 'Solo Talento Humano puede modificar' });
+        return res.status(403).json({ error: 'Solo el personal de Talento Humano puede modificar datos' });
     }
+
     const { tabla, id } = req.params;
-    const { 
-        cedula, nombre_completo, fecha_ingreso, correo, celular, direccion,
-        contacto_emergencia_nombre, contacto_emergencia_telefono, contacto_emergencia_parentesco,
-        cargas_familiares, vacaciones,
-        banco_nombre, banco_tipo_cuenta, banco_cuenta,
-        tipo_contrato_id
-    } = req.body;
-    
+    const { cedula, nombre_completo, fecha_ingreso, correo, celular, direccion, username } = req.body;
+
+    // Validación de tabla (evita inyección SQL por nombre de tabla)
     const tablasPermitidas = ['nomina'];
-    if (!tablasPermitidas.includes(tabla) || tabla === 'pasivos') {
-        return res.status(403).json({ error: 'No permitido' });
+    if (!tablasPermitidas.includes(tabla)) {
+        return res.status(400).json({ error: 'Tabla de destino no válida' });
     }
-    
+    if (tabla === 'pasivos') {
+        return res.status(403).json({ error: 'Los registros de personal pasivo son históricos y no se pueden modificar.' });
+    }
+
+    // Validaciones de campos
+    if (!cedula || cedula.length !== 10) {
+        return res.status(400).json({ error: 'La cédula debe tener exactamente 10 dígitos' });
+    }
+    if (!correo || !esCorreoValido(correo)) {
+        return res.status(400).json({ error: 'Correo inválido o dominio institucional no permitido' });
+    }
+    if (!nombre_completo) {
+        return res.status(400).json({ error: 'El nombre completo es obligatorio' });
+    }
+
     try {
-        const existe = await pool.query(`SELECT foto_url FROM ${tabla} WHERE id = $1`, [id]);
-        if (existe.rows.length === 0) return res.status(404).json({ error: 'No existe' });
-        
-        let fotoFinal = existe.rows[0].foto_url;
-        if (req.file) fotoFinal = await subirAOneDrive(req.file.buffer, req.file.originalname, 'Fotos_Perfil');
-        
-        const nombreLimpio = nombre_completo.toUpperCase().trim().replace(/[^A-ZÑÁÉÍÓÚ\s]/g, '');
-        const direccionLimpia = (direccion || '').toUpperCase().trim().replace(/[^A-ZÑÁÉÍÓÚ0-9\s#\-\/\.,]/g, '');
-        
+        // Verificar que el usuario exista
+        const existeUser = await pool.query(`SELECT foto_url FROM ${tabla} WHERE id = $1`, [id]);
+        if (existeUser.rows.length === 0) {
+            return res.status(404).json({ error: `El colaborador no existe en la tabla de ${tabla}.` });
+        }
+
+        // Mantener foto anterior si no se sube una nueva
+        let fotoFinal = existeUser.rows[0].foto_url;
+        if (req.file) {
+            fotoFinal = await subirAOneDrive(req.file.buffer, req.file.originalname, 'Fotos_Perfil');
+        }
+
+        // ✅ Formateo consistente con el crear-usuario
+        const nombreLimpio = nombre_completo
+            .toUpperCase()
+            .trim()
+            .replace(/[^A-ZÑÁÉÍÓÚ\s]/g, '');
+
+        // ✅ Manejo seguro si dirección viene vacía + caracteres permitidos
+        const direccionLimpia = (direccion || '')
+            .toUpperCase()
+            .trim()
+            .replace(/[^A-ZÑÁÉÍÓÚ0-9\s#\-\/\.,]/g, '');
+
+        // Valor para username: si viene en el body se usa, si no la cédula
+        const usuarioLogin = username || cedula;
+
+        // ✅ Consulta corregida: ya no repite cédula en username
         await pool.query(
-            `UPDATE ${tabla} SET
-                cedula = $1, nombre_completo = $2, fecha_ingreso = $3, correo = $4, celular = $5, direccion = $6, foto_url = $7,
-                contacto_emergencia_nombre = $8, contacto_emergencia_telefono = $9, contacto_emergencia_parentesco = $10,
-                cargas_familiares = $11, vacaciones = $12,
-                banco_nombre = $13, banco_tipo_cuenta = $14, banco_cuenta = $15, tipo_contrato_id = $16
-            WHERE id = $17`,
+            `UPDATE ${tabla} 
+            SET username = $1, cedula = $2, nombre_completo = $3, fecha_ingreso = $4, 
+                correo = $5, celular = $6, direccion = $7, foto_url = $8 
+            WHERE id = $9`,
             [
-                cedula, nombreLimpio, fecha_ingreso || null, correo, celular || null, direccionLimpia || null, fotoFinal,
-                contacto_emergencia_nombre || null, contacto_emergencia_telefono || null, contacto_emergencia_parentesco || null,
-                cargas_familiares || 0, vacaciones || 0,
-                banco_nombre || null, banco_tipo_cuenta || null, banco_cuenta || null,
-                tipo_contrato_id || null, id
+                usuarioLogin, 
+                cedula, 
+                nombreLimpio, 
+                fecha_ingreso || null, 
+                correo, 
+                celular || null, 
+                direccionLimpia || null, 
+                fotoFinal, 
+                id
             ]
         );
-        res.json({ message: 'Actualizado correctamente' });
+
+        res.json({ message: 'Datos actualizados correctamente' });
     } catch (err) {
-        if (err.code === '23505') return res.status(400).json({ error: 'Cédula/correo duplicado' });
-        res.status(500).json({ error: 'Error al actualizar' });
+        console.error('Error al modificar usuario:', err);
+        // Manejo específico de duplicados PostgreSQL
+        if (err.code === '23505') {
+            return res.status(400).json({ error: 'La cédula o el correo ya están registrados en otro colaborador' });
+        }
+        res.status(500).json({ error: 'Error al actualizar los datos. Intente nuevamente.' });
     }
 });
 
@@ -624,15 +658,22 @@ app.post('/api/admin/mover-a-pasivo/:id', verificarToken, async (req, res) => {
         const insertPasivo =
             await client.query(
                 `
-INSERT INTO pasivos (
-    id, username, cedula, nombre_completo, rol, fecha_ingreso, correo, celular, direccion, foto_url,
-    contacto_emergencia_nombre, contacto_emergencia_telefono, contacto_emergencia_parentesco,
-    cargas_familiares, vacaciones,
-    banco_nombre, banco_tipo_cuenta, banco_cuenta, tipo_contrato_id
-) VALUES (
-    $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
-    $11,$12,$13,$14,$15,$16,$17,$18,$19
-)
+                INSERT INTO pasivos (
+                    id,
+                    username,
+                    cedula,
+                    nombre_completo,
+                    rol,
+                    fecha_ingreso,
+                    correo,
+                    celular,
+                    direccion,
+                    foto_url
+                )
+                VALUES (
+                    $1,$2,$3,$4,$5,
+                    $6,$7,$8,$9,$10
+                )
                 RETURNING id
                 `,
                 [
@@ -645,10 +686,7 @@ INSERT INTO pasivos (
                     u.correo,
                     u.celular,
                     u.direccion,
-                    u.foto_url,
-                    u.contacto_emergencia_nombre, u.contacto_emergencia_telefono, u.contacto_emergencia_parentesco,
-u.cargas_familiares, u.vacaciones,
-u.banco_nombre, u.banco_tipo_cuenta, u.banco_cuenta, u.tipo_contrato_id
+                    u.foto_url
                 ]
             );
 
@@ -2635,16 +2673,6 @@ app.delete(
 
     }
 );
-
-// ✅ LISTA DE TIPOS DE CONTRATO
-app.get('/api/tipos-contrato', verificarToken, async (req, res) => {
-    try {
-        const result = await pool.query('SELECT id, nombre FROM tipo_contratos ORDER BY nombre ASC');
-        res.json(result.rows);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
