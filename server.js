@@ -38,28 +38,38 @@ const cca = new msal.ConfidentialClientApplication(msalConfig);
 // Función auxiliar para subir archivos directos a OneDrive usando Microsoft Graph
 // ✅ FUNCIÓN CORREGIDA Y MEJORADA PARA ONEDRIVE
 // ✅ OPTIMIZACIÓN: GUARDAR TOKEN PARA NO PEDIRLO SIEMPRE
+// server.js - Reemplaza la función obtenerTokenValido por esta versión:
 let _cachedToken = null;
 let _tokenExpiresAt = 0;
+let _tokenPromise = null;
 
 async function obtenerTokenValido() {
-    const ahora = Date.now() / 1000; // Tiempo actual en segundos
-    // ✅ MEJORA: Si el token existe y le falta más de 10 minutos para vencer, lo reutilizamos
+    const ahora = Date.now() / 1000;
+    
     if (_cachedToken && _tokenExpiresAt > (ahora + 600)) { 
         return _cachedToken;
     }
 
-    // Si no es válido, pedimos uno nuevo
-    const tokenRequest = { scopes: ['https://graph.microsoft.com/.default'] };
-    const response = await cca.acquireTokenByClientCredential(tokenRequest);
-    
-    if (!response || !response.accessToken) throw new Error("No se pudo obtener token");
+    if (_tokenPromise) {
+        return await _tokenPromise;
+    }
 
-    // Guardamos el token y su fecha de vencimiento
-    _cachedToken = response.accessToken;
-    _tokenExpiresAt = response.expiresOnTimestamp;
-    
-    console.log("🔑 Nuevo token OneDrive obtenido y guardado");
-    return _cachedToken;
+    _tokenPromise = (async () => {
+        try {
+            const tokenRequest = { scopes: ['https://graph.microsoft.com/.default'] };
+            const response = await cca.acquireTokenByClientCredential(tokenRequest);
+            if (!response || !response.accessToken) throw new Error("No se pudo obtener token");
+            
+            _cachedToken = response.accessToken;
+            _tokenExpiresAt = response.expiresOnTimestamp;
+            console.log("🔑 Nuevo token OneDrive obtenido y guardado");
+            return _cachedToken;
+        } finally {
+            _tokenPromise = null;
+        }
+    })();
+
+    return await _tokenPromise;
 }
 // =============================================================
 // ✅ ONEDRIVE: RUTAS SEGURAS POR PERSONA / TIPO DE DOCUMENTO
@@ -473,7 +483,7 @@ app.post('/api/admin/crear-usuario', verificarToken, upload.single('foto'), asyn
     }
 
     // Valor por defecto para username
-    const usuarioLogin = username || cedula;
+    const usuarioLogin = cedula;
 
 try {
         const foto_url = req.file ? await subirAOneDrive(req.file.buffer, req.file.originalname, 'Fotos_Perfil') : null;
