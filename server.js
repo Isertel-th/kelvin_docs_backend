@@ -436,9 +436,16 @@ app.delete(
 // ✅ Ruta para ver Nómina (Todos pueden entrar ahora)
 app.get('/api/admin/empleados', verificarToken, permisoAdminDoc, async (req, res) => {
     try {
-        const result = await pool.query("SELECT * FROM nomina ORDER BY nombre_completo ASC");
+        const result = await pool.query(`
+            SELECT n.*, tc.nombre AS tipo_contrato_nombre 
+            FROM nomina n 
+            LEFT JOIN tipo_contratos tc ON n.tipo_contrato_id = tc.id 
+            ORDER BY n.nombre_completo ASC
+        `);
         res.json(result.rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { 
+        res.status(500).json({ error: err.message }); 
+    }
 });
 
 // ✅ Ruta para ver Pasivos (Todos pueden entrar ahora)
@@ -450,138 +457,98 @@ app.get('/api/admin/pasivos', verificarToken, permisoAdminDoc, async (req, res) 
 });
 
 app.post('/api/admin/crear-usuario', verificarToken, upload.single('foto'), async (req, res) => {
-    // Verificación de rol
     if (req.user.rol !== 'Talento Humano') {
         return res.status(403).json({ error: 'Solo el personal de Talento Humano crea usuarios' });
     }
 
-    // Extraemos todos los campos incluyendo dirección
-    const { cedula, nombre_completo, fecha_ingreso, correo, celular, username, direccion, rol } = req.body;
+    const { 
+        cedula, nombre_completo, fecha_ingreso, correo, celular, username, direccion, rol,
+        contacto_emergencia_telefono, contacto_emergencia_nombre, contacto_emergencia_parentesco,
+        cargas_familiares, vacaciones, cuenta_bancaria, nombre_banco, tipo_cuenta, tipo_contrato_id
+    } = req.body;
 
-    // Validaciones mejoradas
-    if (!cedula || cedula.length !== 10) {
-        return res.status(400).json({ error: 'Cédula debe tener 10 dígitos' });
-    }
-    if (!correo || !esCorreoValido(correo)) {
-        return res.status(400).json({ error: 'Correo inválido o dominio no permitido' });
-    }
-    if (!nombre_completo || !req.file) {
-        return res.status(400).json({ error: 'Faltan campos obligatorios o la foto' });
-    }
+    if (!cedula || cedula.length !== 10) return res.status(400).json({ error: 'Cédula debe tener 10 dígitos' });
+    if (!correo || !esCorreoValido(correo)) return res.status(400).json({ error: 'Correo inválido o dominio no permitido' });
+    if (!nombre_completo || !req.file) return res.status(400).json({ error: 'Faltan campos obligatorios o la foto' });
 
-    // Valor por defecto para username
     const usuarioLogin = username || cedula;
 
     try {
-        // Subida de imagen
         const foto_url = await subirAOneDrive(req.file.buffer, req.file.originalname, 'Fotos_Perfil');
 
-        // ✅ Limpieza y formateo del nombre (solo letras, ñ y espacios)
-        const nombreLimpio = nombre_completo
-            .toUpperCase()
-            .trim()
-            .replace(/[^A-ZÑÁÉÍÓÚ\s]/g, ''); // Acepta vocales con tilde también
-
-        // ✅ Limpieza y formateo de dirección (admite caracteres usados en direcciones)
-        const direccionLimpia = (direccion || '')
-            .toUpperCase()
-            .trim()
-            .replace(/[^A-ZÑÁÉÍÓÚ0-9\s#\-\/\.,]/g, ''); // Permite números y símbolos comunes
-
-        // ✅ Rol: si viene del cuerpo usarlo, si no por defecto 'user'
+        const nombreLimpio = nombre_completo.toUpperCase().trim().replace(/[^A-ZÑÁÉÍÓÚ\s]/g, '');
+        const direccionLimpia = (direccion || '').toUpperCase().trim().replace(/[^A-ZÑÁÉÍÓÚ0-9\s#\-\/\.,]/g, '');
         const rolAsignar = rol || 'user';
 
-        // Inserción en base de datos
         await pool.query(
             `INSERT INTO nomina 
-            (username, cedula, nombre_completo, rol, fecha_ingreso, correo, celular, direccion, foto_url) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-            [usuarioLogin, cedula, nombreLimpio, rolAsignar, fecha_ingreso || null, correo, celular || null, direccionLimpia || null, foto_url]
+            (username, cedula, nombre_completo, rol, fecha_ingreso, correo, celular, direccion, foto_url,
+             contacto_emergencia_telefono, contacto_emergencia_nombre, contacto_emergencia_parentesco,
+             cargas_familiares, vacaciones, cuenta_bancaria, nombre_banco, tipo_cuenta, tipo_contrato_id) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+            [
+                usuarioLogin, cedula, nombreLimpio, rolAsignar, fecha_ingreso || null, correo, celular || null, direccionLimpia || null, foto_url,
+                contacto_emergencia_telefono || null, contacto_emergencia_nombre || null, contacto_emergencia_parentesco || null,
+                cargas_familiares ? parseInt(cargas_familiares) : 0, 
+                vacaciones ? parseFloat(vacaciones) : 0, 
+                cuenta_bancaria || null, nombre_banco || null, tipo_cuenta || null, 
+                tipo_contrato_id ? parseInt(tipo_contrato_id) : null
+            ]
         );
 
         res.json({ message: 'Usuario creado correctamente' });
     } catch (err) {
         console.error('Error al crear usuario:', err);
-        // Si es error de duplicado (cédula/correo)
-        if (err.code === '23505') { // Código PostgreSQL para duplicado
-            return res.status(400).json({ error: 'La cédula o el correo ya están registrados' });
-        }
+        if (err.code === '23505') return res.status(400).json({ error: 'La cédula o el correo ya están registrados' });
         res.status(500).json({ error: 'Error al guardar en Nómina. Intente nuevamente.' });
     }
 });
 
 app.put('/api/admin/modificar-usuario/:tabla/:id', verificarToken, upload.single('foto'), async (req, res) => {
-    // Verificación de rol
     if (req.user.rol !== 'Talento Humano') {
         return res.status(403).json({ error: 'Solo el personal de Talento Humano puede modificar datos' });
     }
 
     const { tabla, id } = req.params;
-    const { cedula, nombre_completo, fecha_ingreso, correo, celular, direccion, username } = req.body;
+    const { 
+        cedula, nombre_completo, fecha_ingreso, correo, celular, direccion, username,
+        contacto_emergencia_telefono, contacto_emergencia_nombre, contacto_emergencia_parentesco,
+        cargas_familiares, vacaciones, cuenta_bancaria, nombre_banco, tipo_cuenta, tipo_contrato_id
+    } = req.body;
 
-    // Validación de tabla (evita inyección SQL por nombre de tabla)
-    const tablasPermitidas = ['nomina'];
-    if (!tablasPermitidas.includes(tabla)) {
-        return res.status(400).json({ error: 'Tabla de destino no válida' });
-    }
-    if (tabla === 'pasivos') {
-        return res.status(403).json({ error: 'Los registros de personal pasivo son históricos y no se pueden modificar.' });
-    }
+    if (tabla !== 'nomina') return res.status(400).json({ error: 'Tabla de destino no válida' });
 
-    // Validaciones de campos
-    if (!cedula || cedula.length !== 10) {
-        return res.status(400).json({ error: 'La cédula debe tener exactamente 10 dígitos' });
-    }
-    if (!correo || !esCorreoValido(correo)) {
-        return res.status(400).json({ error: 'Correo inválido o dominio institucional no permitido' });
-    }
-    if (!nombre_completo) {
-        return res.status(400).json({ error: 'El nombre completo es obligatorio' });
-    }
+    if (!cedula || cedula.length !== 10) return res.status(400).json({ error: 'La cédula debe tener exactamente 10 dígitos' });
+    if (!correo || !esCorreoValido(correo)) return res.status(400).json({ error: 'Correo inválido o dominio institucional no permitido' });
+    if (!nombre_completo) return res.status(400).json({ error: 'El nombre completo es obligatorio' });
 
     try {
-        // Verificar que el usuario exista
         const existeUser = await pool.query(`SELECT foto_url FROM ${tabla} WHERE id = $1`, [id]);
-        if (existeUser.rows.length === 0) {
-            return res.status(404).json({ error: `El colaborador no existe en la tabla de ${tabla}.` });
-        }
+        if (existeUser.rows.length === 0) return res.status(404).json({ error: `El colaborador no existe en ${tabla}.` });
 
-        // Mantener foto anterior si no se sube una nueva
         let fotoFinal = existeUser.rows[0].foto_url;
         if (req.file) {
             fotoFinal = await subirAOneDrive(req.file.buffer, req.file.originalname, 'Fotos_Perfil');
         }
 
-        // ✅ Formateo consistente con el crear-usuario
-        const nombreLimpio = nombre_completo
-            .toUpperCase()
-            .trim()
-            .replace(/[^A-ZÑÁÉÍÓÚ\s]/g, '');
-
-        // ✅ Manejo seguro si dirección viene vacía + caracteres permitidos
-        const direccionLimpia = (direccion || '')
-            .toUpperCase()
-            .trim()
-            .replace(/[^A-ZÑÁÉÍÓÚ0-9\s#\-\/\.,]/g, '');
-
-        // Valor para username: si viene en el body se usa, si no la cédula
+        const nombreLimpio = nombre_completo.toUpperCase().trim().replace(/[^A-ZÑÁÉÍÓÚ\s]/g, '');
+        const direccionLimpia = (direccion || '').toUpperCase().trim().replace(/[^A-ZÑÁÉÍÓÚ0-9\s#\-\/\.,]/g, '');
         const usuarioLogin = username || cedula;
 
-        // ✅ Consulta corregida: ya no repite cédula en username
         await pool.query(
             `UPDATE ${tabla} 
             SET username = $1, cedula = $2, nombre_completo = $3, fecha_ingreso = $4, 
-                correo = $5, celular = $6, direccion = $7, foto_url = $8 
-            WHERE id = $9`,
+                correo = $5, celular = $6, direccion = $7, foto_url = $8,
+                contacto_emergencia_telefono = $9, contacto_emergencia_nombre = $10, contacto_emergencia_parentesco = $11,
+                cargas_familiares = $12, vacaciones = $13, cuenta_bancaria = $14, nombre_banco = $15, tipo_cuenta = $16, tipo_contrato_id = $17
+            WHERE id = $18`,
             [
-                usuarioLogin, 
-                cedula, 
-                nombreLimpio, 
-                fecha_ingreso || null, 
-                correo, 
-                celular || null, 
-                direccionLimpia || null, 
-                fotoFinal, 
+                usuarioLogin, cedula, nombreLimpio, fecha_ingreso || null, correo, celular || null, direccionLimpia || null, fotoFinal,
+                contacto_emergencia_telefono || null, contacto_emergencia_nombre || null, contacto_emergencia_parentesco || null,
+                cargas_familiares ? parseInt(cargas_familiares) : 0, 
+                vacaciones ? parseFloat(vacaciones) : 0, 
+                cuenta_bancaria || null, nombre_banco || null, tipo_cuenta || null, 
+                tipo_contrato_id ? parseInt(tipo_contrato_id) : null,
                 id
             ]
         );
@@ -589,10 +556,7 @@ app.put('/api/admin/modificar-usuario/:tabla/:id', verificarToken, upload.single
         res.json({ message: 'Datos actualizados correctamente' });
     } catch (err) {
         console.error('Error al modificar usuario:', err);
-        // Manejo específico de duplicados PostgreSQL
-        if (err.code === '23505') {
-            return res.status(400).json({ error: 'La cédula o el correo ya están registrados en otro colaborador' });
-        }
+        if (err.code === '23505') return res.status(400).json({ error: 'La cédula o el correo ya están registrados' });
         res.status(500).json({ error: 'Error al actualizar los datos. Intente nuevamente.' });
     }
 });
@@ -2673,6 +2637,16 @@ app.delete(
 
     }
 );
+
+// ✅ Obtener listado de tipos de contratos
+app.get('/api/tipos-contrato', verificarToken, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM tipo_contratos ORDER BY id ASC');
+        res.json(result.rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Servidor Isertel corriendo en puerto ${PORT}`));
