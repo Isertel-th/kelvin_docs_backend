@@ -158,7 +158,7 @@ async function subirAOneDrive(buffer, originalName, subFolder = '') {
             .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
             .replace(/[^a-zA-Z0-9._-]/g, '_');
 
-        const fileName = `${Date.now()}_${cleanOriginalName}`;
+const fileName = cleanOriginalName;
 
         const subCarpetas = Array.isArray(subFolder)
             ? subFolder
