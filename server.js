@@ -464,7 +464,8 @@ app.post('/api/admin/crear-usuario', verificarToken, upload.single('foto'), asyn
     const { 
         cedula, nombre_completo, fecha_ingreso, correo, celular, username, direccion, rol,
         contacto_emergencia_telefono, contacto_emergencia_nombre, contacto_emergencia_parentesco,
-        cargas_familiares, vacaciones, cuenta_bancaria, nombre_banco, tipo_cuenta, tipo_contrato_id
+        cargas_familiares, vacaciones, cuenta_bancaria, nombre_banco, tipo_cuenta, tipo_contrato_id,
+        tipo_licencia, fecha_caducidad_licencia // 👈 Nuevos campos
     } = req.body;
 
     if (!cedula || cedula.length !== 10) return res.status(400).json({ error: 'Cédula debe tener 10 dígitos' });
@@ -484,15 +485,17 @@ app.post('/api/admin/crear-usuario', verificarToken, upload.single('foto'), asyn
             `INSERT INTO nomina 
             (username, cedula, nombre_completo, rol, fecha_ingreso, correo, celular, direccion, foto_url,
              contacto_emergencia_telefono, contacto_emergencia_nombre, contacto_emergencia_parentesco,
-             cargas_familiares, vacaciones, cuenta_bancaria, nombre_banco, tipo_cuenta, tipo_contrato_id) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+             cargas_familiares, vacaciones, cuenta_bancaria, nombre_banco, tipo_cuenta, tipo_contrato_id,
+             tipo_licencia, fecha_caducidad_licencia) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
             [
                 usuarioLogin, cedula, nombreLimpio, rolAsignar, fecha_ingreso || null, correo, celular || null, direccionLimpia || null, foto_url,
                 contacto_emergencia_telefono || null, contacto_emergencia_nombre || null, contacto_emergencia_parentesco || null,
                 cargas_familiares ? parseInt(cargas_familiares) : 0, 
                 vacaciones ? parseFloat(vacaciones) : 0, 
                 cuenta_bancaria || null, nombre_banco || null, tipo_cuenta || null, 
-                tipo_contrato_id ? parseInt(tipo_contrato_id) : null
+                tipo_contrato_id ? parseInt(tipo_contrato_id) : null,
+                tipo_licencia || null, fecha_caducidad_licencia || null // 👈 Valores agregados
             ]
         );
 
@@ -513,7 +516,8 @@ app.put('/api/admin/modificar-usuario/:tabla/:id', verificarToken, upload.single
     const { 
         cedula, nombre_completo, fecha_ingreso, correo, celular, direccion, username,
         contacto_emergencia_telefono, contacto_emergencia_nombre, contacto_emergencia_parentesco,
-        cargas_familiares, vacaciones, cuenta_bancaria, nombre_banco, tipo_cuenta, tipo_contrato_id
+        cargas_familiares, vacaciones, cuenta_bancaria, nombre_banco, tipo_cuenta, tipo_contrato_id,
+        tipo_licencia, fecha_caducidad_licencia // 👈 Nuevos campos
     } = req.body;
 
     if (tabla !== 'nomina') return res.status(400).json({ error: 'Tabla de destino no válida' });
@@ -540,8 +544,9 @@ app.put('/api/admin/modificar-usuario/:tabla/:id', verificarToken, upload.single
             SET username = $1, cedula = $2, nombre_completo = $3, fecha_ingreso = $4, 
                 correo = $5, celular = $6, direccion = $7, foto_url = $8,
                 contacto_emergencia_telefono = $9, contacto_emergencia_nombre = $10, contacto_emergencia_parentesco = $11,
-                cargas_familiares = $12, vacaciones = $13, cuenta_bancaria = $14, nombre_banco = $15, tipo_cuenta = $16, tipo_contrato_id = $17
-            WHERE id = $18`,
+                cargas_familiares = $12, vacaciones = $13, cuenta_bancaria = $14, nombre_banco = $15, tipo_cuenta = $16, 
+                tipo_contrato_id = $17, tipo_licencia = $18, fecha_caducidad_licencia = $19
+            WHERE id = $20`,
             [
                 usuarioLogin, cedula, nombreLimpio, fecha_ingreso || null, correo, celular || null, direccionLimpia || null, fotoFinal,
                 contacto_emergencia_telefono || null, contacto_emergencia_nombre || null, contacto_emergencia_parentesco || null,
@@ -549,6 +554,7 @@ app.put('/api/admin/modificar-usuario/:tabla/:id', verificarToken, upload.single
                 vacaciones ? parseFloat(vacaciones) : 0, 
                 cuenta_bancaria || null, nombre_banco || null, tipo_cuenta || null, 
                 tipo_contrato_id ? parseInt(tipo_contrato_id) : null,
+                tipo_licencia || null, fecha_caducidad_licencia || null, // 👈 Valores agregados
                 id
             ]
         );
@@ -619,8 +625,7 @@ app.post('/api/admin/mover-a-pasivo/:id', verificarToken, async (req, res) => {
                 resExistente.rows.length > 0;
         }
 
-        const insertPasivo =
-            await client.query(
+            const insertPasivo = await client.query(
                 `
                 INSERT INTO pasivos (
                     id,
@@ -632,11 +637,14 @@ app.post('/api/admin/mover-a-pasivo/:id', verificarToken, async (req, res) => {
                     correo,
                     celular,
                     direccion,
-                    foto_url
+                    foto_url,
+                    tipo_licencia,
+                    fecha_caducidad_licencia
                 )
                 VALUES (
                     $1,$2,$3,$4,$5,
-                    $6,$7,$8,$9,$10
+                    $6,$7,$8,$9,$10,
+                    $11,$12
                 )
                 RETURNING id
                 `,
@@ -650,7 +658,9 @@ app.post('/api/admin/mover-a-pasivo/:id', verificarToken, async (req, res) => {
                     u.correo,
                     u.celular,
                     u.direccion,
-                    u.foto_url
+                    u.foto_url,
+                    u.tipo_licencia || null,
+                    u.fecha_caducidad_licencia || null
                 ]
             );
 
